@@ -22,6 +22,10 @@ use std::{
     rc::Rc,
 };
 
+/// The optional index identifies a file; otherwise the path identifies a directory.
+pub type EntryActionRenderer =
+    Rc<dyn Fn(Option<usize>, &str, &str, &[usize], &mut App) -> AnyElement>;
+
 struct Node {
     file_index: Option<usize>,
     file_count: usize,
@@ -30,12 +34,15 @@ struct Node {
     move_source: Option<SharedString>,
     stats: Option<DiffStats>,
     area: Option<Area>,
+    files: Vec<usize>,
+    group: Option<bool>,
 }
 
 pub struct ChangeTree {
     state: Entity<TreeState>,
     nodes: Rc<HashMap<SharedString, Node>>,
     _subscription: Subscription,
+    progress: Vec<Option<(usize, usize)>>,
 }
 
 #[derive(Default)]
@@ -60,6 +67,21 @@ impl Directory {
             directory.files.push(index);
         }
         root
+    }
+
+    fn group(changes: &[Change], untracked: bool) -> Self {
+        let mut directory = Self::from_changes(changes);
+        fn retain(directory: &mut Directory, changes: &[Change], untracked: bool) {
+            directory
+                .files
+                .retain(|&index| (changes[index].area == Area::Untracked) == untracked);
+            directory.directories.retain(|_, child| {
+                retain(child, changes, untracked);
+                !child.files.is_empty() || !child.directories.is_empty()
+            });
+        }
+        retain(&mut directory, changes, untracked);
+        directory
     }
 
     fn into_item(
@@ -110,6 +132,8 @@ impl Directory {
                     move_source: move_source(change),
                     stats: stats[index],
                     area: Some(change.area),
+                    files: vec![index],
+                    group: None,
                 },
             );
             children.push(TreeItem::new(
@@ -122,6 +146,10 @@ impl Directory {
                     .into_owned(),
             ));
         }
+        let files = children
+            .iter()
+            .flat_map(|child| nodes[&child.id].files.iter().copied())
+            .collect();
         let count = children
             .iter()
             .map(|child| nodes[&child.id].file_count)
@@ -145,6 +173,8 @@ impl Directory {
                 move_source: None,
                 stats: Some(stats),
                 area: None,
+                files,
+                group: None,
             },
         );
         TreeItem::new(id, label).children(children).expanded(true)
@@ -246,6 +276,18 @@ fn set_directories_expanded(mut item: TreeItem, expanded: bool) -> TreeItem {
     item
 }
 
+pub fn working_caption(area: Area, progress: Option<(usize, usize)>) -> String {
+    if area == Area::Partial
+        && let Some((staged, total)) = progress.filter(|(_, total)| *total > 0)
+    {
+        tr("staging_progress")
+            .replace("{staged}", &staged.to_string())
+            .replace("{total}", &total.to_string())
+    } else {
+        area_label(area).to_owned()
+    }
+}
+
 pub fn file_status_color(status: char, cx: &App) -> Hsla {
     match status {
         'A' | 'C' => cx.theme().green,
@@ -288,11 +330,12 @@ impl ChangeTree {
         changes: &[Change],
         stats: &[Option<DiffStats>],
         repository: &Path,
+        working: bool,
         cx: &mut Context<T>,
         on_file: impl Fn(&mut T, usize, &mut Context<T>) + 'static,
     ) -> Self {
         let mut nodes = HashMap::new();
-        let root = Directory::from_changes(changes).into_item(
+        let mut root = Directory::from_changes(changes).into_item(
             repository
                 .file_name()
                 .unwrap_or(repository.as_os_str())
@@ -304,6 +347,49 @@ impl ChangeTree {
             stats,
             &mut nodes,
         );
+        if working {
+            let parent = nodes.remove(&root.id).unwrap();
+            nodes.clear();
+            let mut groups = Vec::new();
+            for untracked in [false, true] {
+                let directory = Directory::group(changes, untracked);
+                if directory.files.is_empty() && directory.directories.is_empty() {
+                    continue;
+                }
+                let start = nodes
+                    .keys()
+                    .cloned()
+                    .collect::<std::collections::HashSet<_>>();
+                let mut group = directory.into_item(
+                    tr(if untracked {
+                        "untracked_files"
+                    } else {
+                        "tracked_changes"
+                    })
+                    .to_owned(),
+                    Path::new(""),
+                    true,
+                    changes,
+                    stats,
+                    &mut nodes,
+                );
+                for (_, node) in nodes.iter_mut().filter(|(id, _)| !start.contains(*id)) {
+                    node.group = Some(untracked);
+                }
+                let id: SharedString = if untracked {
+                    "tree-untracked"
+                } else {
+                    "tree-tracked"
+                }
+                .into();
+                let node = nodes.remove(&group.id).unwrap();
+                nodes.insert(id.clone(), node);
+                group.id = id;
+                groups.push(group);
+            }
+            nodes.insert(root.id.clone(), parent);
+            root.children = groups;
+        }
         nodes.get_mut(&root.id).unwrap().path = repository.display().to_string().into();
         let state = cx.new(|cx| TreeState::new(cx).items(vec![root]));
         let nodes = Rc::new(nodes);
@@ -322,7 +408,37 @@ impl ChangeTree {
             state,
             nodes,
             _subscription: subscription,
+            progress: Vec::new(),
         }
+    }
+
+    pub fn set_progress(&mut self, progress: Vec<Option<(usize, usize)>>) {
+        self.progress = progress;
+    }
+
+    pub fn update_group_labels(&self, cx: &mut App) {
+        self.state.update(cx, |state, cx| {
+            let Some(mut root) = state.entry(0).map(|entry| entry.item().clone()) else {
+                return;
+            };
+            let mut changed = false;
+            for group in &mut root.children {
+                let key = match group.id.as_str() {
+                    "tree-tracked" => "tracked_changes",
+                    "tree-untracked" => "untracked_files",
+                    _ => continue,
+                };
+                if group.label.as_str() != tr(key) {
+                    group.label = tr(key).into();
+                    changed = true;
+                }
+            }
+            if changed {
+                let selected = state.selected_index();
+                state.set_items(vec![root], cx);
+                state.set_selected_index(selected, cx);
+            }
+        });
     }
 
     pub fn has_collapsed_directories(&self, cx: &App) -> bool {
@@ -353,16 +469,64 @@ impl ChangeTree {
         });
     }
 
+    pub fn restore_expansion(&self, previous: &Self, cx: &mut App) {
+        fn collect(
+            item: &TreeItem,
+            nodes: &HashMap<SharedString, Node>,
+            expanded: &mut HashMap<(Option<bool>, SharedString), bool>,
+        ) {
+            if item.is_folder() {
+                let node = &nodes[&item.id];
+                expanded.insert((node.group, node.path.clone()), item.is_expanded());
+                for child in &item.children {
+                    collect(child, nodes, expanded);
+                }
+            }
+        }
+        fn restore(
+            mut item: TreeItem,
+            nodes: &HashMap<SharedString, Node>,
+            expanded: &HashMap<(Option<bool>, SharedString), bool>,
+        ) -> TreeItem {
+            if item.is_folder() {
+                if let Some(value) =
+                    expanded.get(&(nodes[&item.id].group, nodes[&item.id].path.clone()))
+                {
+                    item = item.expanded(*value);
+                }
+                item.children = item
+                    .children
+                    .into_iter()
+                    .map(|child| restore(child, nodes, expanded))
+                    .collect();
+            }
+            item
+        }
+        let mut expanded = HashMap::new();
+        if let Some(root) = previous.state.read(cx).entry(0) {
+            collect(root.item(), &previous.nodes, &mut expanded);
+        }
+        self.state.update(cx, |state, cx| {
+            let selected = state.selected_item().map(|item| item.id.clone());
+            if let Some(root) = state.entry(0).map(|entry| entry.item().clone()) {
+                state.set_items(vec![restore(root, &self.nodes, &expanded)], cx);
+                state.set_selected_index(selected.and_then(|id| state.index_of(&id)), cx);
+            }
+        });
+    }
+
     pub fn render(
         &self,
         branch: Option<String>,
         show_stats: bool,
         working: bool,
         on_activate_file: impl Fn(&usize, &mut Window, &mut App) + 'static,
+        entry_action: Option<EntryActionRenderer>,
         cx: &App,
     ) -> impl IntoElement {
         let on_activate_file = Rc::new(on_activate_file);
         let nodes = self.nodes.clone();
+        let progress = self.progress.clone();
         let left_state = self.state.clone();
         let right_state = self.state.clone();
         let focus_state = self.state.clone();
@@ -399,6 +563,15 @@ impl ChangeTree {
                         let item = entry.item();
                         let node = &nodes[&item.id];
                         let file_index = node.file_index;
+                        let action_id = if entry.is_root() {
+                            String::new()
+                        } else if node.path.is_empty() {
+                            item.id.to_string()
+                        } else if node.group == Some(true) {
+                            format!("untracked:{}", node.path)
+                        } else {
+                            node.path.to_string()
+                        };
                         let activate = on_activate_file.clone();
                         let move_annotation = node.move_source.as_ref().map(|source| {
                             (
@@ -419,8 +592,9 @@ impl ChangeTree {
                             .min_w_0()
                             .pr_2()
                             .pl(px(8. + entry.depth() as f32 * 18.))
-                            .gap_2()
+                            .gap_1()
                             .text_sm()
+                            .line_height(relative(1.))
                             .cursor_pointer()
                             .tooltip(move |window, cx| {
                                 Tooltip::new(tooltip.clone()).build(window, cx)
@@ -462,11 +636,27 @@ impl ChangeTree {
                                         )
                                     }),
                             )
+                            .when_some(entry_action.as_ref(), |row, render| {
+                                row.child(render(
+                                    file_index,
+                                    &action_id,
+                                    if entry.is_root() {
+                                        ""
+                                    } else if node.path.is_empty() {
+                                        item.label.as_str()
+                                    } else {
+                                        node.path.as_str()
+                                    },
+                                    &node.files,
+                                    cx,
+                                ))
+                            })
                             .child(if file_index.is_some() {
                                 file_icon(Path::new(node.path.as_str())).into_any_element()
                             } else {
-                                Icon::new(IconName::Folder)
-                                    .small()
+                                Icon::default()
+                                    .path("ui-icons/folder.svg")
+                                    .size(px(16.))
                                     .flex_none()
                                     .text_color(cx.theme().muted_foreground)
                                     .into_any_element()
@@ -527,7 +717,11 @@ impl ChangeTree {
                                         .flex_none()
                                         .text_xs()
                                         .text_color(cx.theme().muted_foreground)
-                                        .child(area_label(node.area.unwrap())),
+                                        .child(working_caption(
+                                            node.area.unwrap(),
+                                            file_index
+                                                .and_then(|i| progress.get(i).copied().flatten()),
+                                        )),
                                 )
                             })
                             .when(
@@ -730,6 +924,7 @@ mod tests {
                 self.show_stats,
                 false,
                 |_, _, _| {},
+                None,
                 cx,
             )
         }
@@ -745,6 +940,7 @@ mod tests {
                         &changes(),
                         &stats(),
                         Path::new("repository"),
+                        false,
                         cx,
                         |viewer: &mut Viewer, index, _| viewer.opened.set(Some(index)),
                     ),
@@ -823,6 +1019,7 @@ mod tests {
                         &changes,
                         &stats,
                         Path::new("repository"),
+                        false,
                         cx,
                         |viewer: &mut Viewer, index, _| viewer.opened.set(Some(index)),
                     ),
@@ -859,6 +1056,7 @@ mod tests {
                         &changes(),
                         &stats(),
                         Path::new("repository"),
+                        false,
                         cx,
                         |viewer: &mut Viewer, index, _| viewer.opened.set(Some(index)),
                     ),
@@ -916,6 +1114,7 @@ mod tests {
                         &changes(),
                         &stats(),
                         Path::new("repository"),
+                        false,
                         cx,
                         |viewer: &mut Viewer, index, _| viewer.opened.set(Some(index)),
                     ),

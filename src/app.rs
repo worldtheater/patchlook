@@ -2,20 +2,25 @@ use crate::{
     change_tree::{ChangeTree, file_status_color, stats_label},
     file_icons::file_icon,
     image_diff::{ImageDiff, ImageVersions, image_format},
-    strings::{area_label, language_name, tr},
+    strings::{language_name, tr},
 };
 use gpui_kit::assets::IconName;
 use gpui_kit::base::{SelectableText, TestSupportExt};
 use gpui_kit::{
     component::{
-        ActiveTheme, Disableable, Icon, Selectable, Sizable, Theme, ThemeMode, TitleBar,
-        button::{Button, ButtonCustomVariant, ButtonVariants},
-        diff::{Diff, DiffChangeIndicator, DiffFile, DiffHunkSeparator, DiffMode, DiffState},
+        ActiveTheme, Disableable, FocusableExt, Icon, Selectable, Sizable, Theme, ThemeMode,
+        TitleBar, WindowExt,
+        button::{Button, ButtonCustomVariant, ButtonVariant, ButtonVariants},
+        diff::{
+            Diff, DiffChangeIndicator, DiffFile, DiffHunkSeparator, DiffLinePosition, DiffMode,
+            DiffSide, DiffState,
+        },
         h_flex,
         input::{Input, InputEvent as TextInputEvent, InputState},
         menu::{DropdownMenu, PopupMenuItem},
         resizable::{h_resizable, resizable_panel, v_resizable},
         scroll::{Scrollbar, ScrollbarMode},
+        switch::Switch,
         tooltip::Tooltip,
         v_flex,
     },
@@ -24,12 +29,16 @@ use gpui_kit::{
 };
 use patchlook::{
     external_open::{ApplicationIcon, FileToOpen, OpenWith, applications_for},
-    git::{Branch, Change, Commit, DiffStats, Repository},
+    git::{
+        AccessMode, Area, Branch, Change, Commit, DiffStats, Repository, ReviewPatch,
+        StageSelection, merge_working_changes,
+    },
     preferences::{Appearance, Language, Layout, Preferences},
 };
 use std::{
     ops::Range,
     path::PathBuf,
+    rc::Rc,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -37,6 +46,7 @@ use std::{
 const FILE_SELECTION_DELAY: Duration = Duration::from_millis(120);
 const COPY_FEEDBACK_DURATION: Duration = Duration::from_secs(2);
 const HISTORY_SEARCH_THRESHOLD: usize = 20;
+const STAGED_CHANGE_BACKGROUND_OPACITY: f32 = 0.30;
 
 gpui_kit::actions!(patchlook, [About, OpenRepository, Refresh, Quit]);
 
@@ -47,8 +57,14 @@ enum View {
     History,
 }
 
+#[derive(Clone, Copy)]
+enum ChangeOperation {
+    Stage(StageSelection),
+    DiscardBlock(usize),
+}
+
 enum FileContent {
-    Text(Vec<DiffFile>),
+    Text(Vec<DiffFile>, Option<Arc<ReviewPatch>>),
     Image(ImageVersions),
 }
 
@@ -60,7 +76,22 @@ impl FileContent {
                 repo.file_versions(change, commit)?,
             )?))
         } else {
-            Ok(Self::Text(DiffFile::parse(&repo.patch(change, commit)?)?))
+            if commit.is_none() {
+                let review = Arc::new(repo.review_patch(change)?);
+                let files = review
+                    .patches()
+                    .map(DiffFile::parse)
+                    .collect::<Result<Vec<_>, _>>()?
+                    .into_iter()
+                    .flatten()
+                    .collect();
+                Ok(Self::Text(files, Some(review)))
+            } else {
+                Ok(Self::Text(
+                    DiffFile::parse(&repo.patch(change, commit)?)?,
+                    None,
+                ))
+            }
         }
     }
 }
@@ -69,7 +100,9 @@ impl FileContent {
 struct PreparedChanges {
     changes: Vec<Change>,
     stats: Vec<Option<DiffStats>>,
+    progress: Vec<Option<(usize, usize)>>,
     preview: Option<anyhow::Result<FileContent>>,
+    preview_index: usize,
 }
 
 impl PreparedChanges {
@@ -79,7 +112,38 @@ impl PreparedChanges {
         commit: Option<&Commit>,
         preview: bool,
     ) -> anyhow::Result<Self> {
-        let stats = repo.file_stats(&changes, commit)?;
+        let raw_stats = repo.file_stats(&changes, commit)?;
+        let (changes, stats) = if commit.is_none() {
+            let merged = merge_working_changes(&changes);
+            let stats = merged
+                .iter()
+                .map(|file| {
+                    let mut total = DiffStats::default();
+                    for (_, stat) in changes
+                        .iter()
+                        .zip(&raw_stats)
+                        .filter(|(c, _)| c.path == file.path)
+                    {
+                        total += (*stat)?;
+                    }
+                    Some(total)
+                })
+                .collect();
+            (merged, stats)
+        } else {
+            (changes, raw_stats)
+        };
+        let progress = changes
+            .iter()
+            .map(|change| {
+                if change.area == Area::Partial {
+                    repo.review_patch(change)
+                        .map(|review| Some(review.progress()))
+                } else {
+                    Ok(None)
+                }
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
         let preview = changes
             .first()
             .filter(|_| preview)
@@ -87,7 +151,9 @@ impl PreparedChanges {
         Ok(Self {
             changes,
             stats,
+            progress,
             preview,
+            preview_index: 0,
         })
     }
 }
@@ -112,11 +178,13 @@ struct ChangeState {
     loaded: bool,
     changes: Vec<Change>,
     file_stats: Vec<Option<DiffStats>>,
+    progress: Vec<Option<(usize, usize)>>,
     change_tree: Option<ChangeTree>,
     total_stats: Option<DiffStats>,
     file_scroll: UniformListScrollHandle,
     selected_file: Option<usize>,
     diff: Entity<DiffState>,
+    staging_patch: Option<Arc<ReviewPatch>>,
     image: Option<Entity<ImageDiff>>,
     image_subscription: Option<Subscription>,
     _diff_subscription: Subscription,
@@ -137,11 +205,13 @@ impl ChangeState {
             loaded: false,
             changes: Vec::new(),
             file_stats: Vec::new(),
+            progress: Vec::new(),
             change_tree: None,
             total_stats: None,
             file_scroll: UniformListScrollHandle::new(),
             selected_file: None,
             diff,
+            staging_patch: None,
             image: None,
             image_subscription: None,
             _diff_subscription: subscription,
@@ -205,6 +275,8 @@ enum HistoryRequest {
 }
 
 pub struct Patchlook {
+    access_mode: AccessMode,
+    write_task: Option<Task<()>>,
     preferences: Preferences,
     about: Entity<crate::about::AboutPanel>,
     external_files: Vec<tempfile::TempDir>,
@@ -257,6 +329,9 @@ impl Patchlook {
             cx.observe_window_activation(window, |this, window, cx| {
                 if window.is_window_active() && this.preferences.language == Language::System {
                     apply_language(Language::System, cx);
+                    if let Some(tree) = &this.working.change_tree {
+                        tree.update_group_labels(cx);
+                    }
                     this.history_search.update(cx, |input, cx| {
                         input.set_placeholder(tr("search_commits_placeholder"), window, cx);
                     });
@@ -265,6 +340,8 @@ impl Patchlook {
         ];
         let initial = initial.or_else(|| preferences.repository.clone());
         let mut app = Self {
+            access_mode: AccessMode::default(),
+            write_task: None,
             working: ChangeState::new(preferences.layout, cx),
             history: HistoryState::new(preferences.layout, cx),
             preferences,
@@ -312,6 +389,374 @@ impl Patchlook {
         if let Err(error) = result {
             self.error = Some(format!("{}: {error:#}", tr("settings_failed")));
         }
+    }
+
+    fn set_access_mode(&mut self, mode: AccessMode, cx: &mut Context<Self>) {
+        if self.write_task.is_none() {
+            self.access_mode = mode;
+            cx.notify();
+        }
+    }
+
+    fn staging_visible(&self) -> bool {
+        self.access_mode == AccessMode::ReadWrite && self.view == View::Working
+    }
+
+    fn staging_disabled(&self) -> bool {
+        self.loading
+            || self.working.files_loading
+            || self.working.patch_loading
+            || self.write_task.is_some()
+    }
+
+    fn write_change(
+        &mut self,
+        change: Change,
+        operation: ChangeOperation,
+        patch: Option<Arc<ReviewPatch>>,
+        cx: &mut Context<Self>,
+    ) {
+        if change.area == Area::Conflict {
+            return;
+        }
+        let side = if matches!(operation, ChangeOperation::DiscardBlock(_)) {
+            DiffSide::Original
+        } else {
+            self.staging_anchor_side()
+        };
+        self.write_repository(
+            side,
+            move |repo, mode| match operation {
+                ChangeOperation::Stage(selection) => match selection {
+                    StageSelection::File => repo.set_staged(mode, &change, selection, None),
+                    StageSelection::Block(block) => repo.set_review_block(
+                        mode,
+                        patch
+                            .as_deref()
+                            .ok_or_else(|| anyhow::anyhow!("No text patch available"))?,
+                        block,
+                    ),
+                },
+                ChangeOperation::DiscardBlock(block) => repo.discard_review_block(
+                    mode,
+                    patch
+                        .as_deref()
+                        .ok_or_else(|| anyhow::anyhow!("No text patch available"))?,
+                    block,
+                ),
+            },
+            cx,
+        );
+    }
+
+    fn staging_anchor_side(&self) -> DiffSide {
+        DiffSide::Modified
+    }
+
+    fn write_repository(
+        &mut self,
+        stable_side: DiffSide,
+        write: impl FnOnce(&Repository, AccessMode) -> anyhow::Result<()> + Send + 'static,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.staging_visible() || self.staging_disabled() {
+            return;
+        }
+        let Some(repo) = self.repository.clone() else {
+            return;
+        };
+        let mode = self.access_mode;
+        let selected = self
+            .working
+            .selected_file
+            .and_then(|i| self.working.changes.get(i))
+            .cloned();
+        self.working.cancel_pending();
+        self.working.files_loading = true;
+        self.working.error = None;
+        self.write_task = Some(cx.spawn(async move |this, cx| {
+            let result: anyhow::Result<anyhow::Result<PreparedChanges>> = cx
+                .background_spawn(async move {
+                    write(&repo, mode)?;
+                    Ok((|| {
+                        let changes = repo.snapshot()?.changes;
+                        let merged = merge_working_changes(&changes);
+                        let preview_index = selected
+                            .as_ref()
+                            .and_then(|selected| {
+                                merged.iter().position(|c| c.path == selected.path)
+                            })
+                            .unwrap_or(0);
+                        let mut prepared = PreparedChanges::load(&repo, changes, None, false)?;
+                        prepared.preview_index = preview_index;
+                        prepared.preview = prepared
+                            .changes
+                            .get(preview_index)
+                            .map(|change| FileContent::load(&repo, change, None));
+                        Ok(prepared)
+                    })())
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.write_task = None;
+                this.working.files_loading = false;
+                match result {
+                    Ok(Ok(prepared)) => {
+                        let previous_tree = this.working.change_tree.take();
+                        let scroll = this.working.file_scroll.clone();
+                        this.install_changes(Source::Working, prepared, Some(stable_side), cx);
+                        this.working.file_scroll = scroll;
+                        if let (Some(tree), Some(previous)) =
+                            (&this.working.change_tree, previous_tree)
+                        {
+                            tree.restore_expansion(&previous, cx);
+                        }
+                    }
+                    Ok(Err(error)) => {
+                        this.working.error =
+                            Some(format!("{}: {error:#}", tr("write_refresh_failed")))
+                    }
+                    Err(error) => {
+                        this.working.error = Some(format!("{}: {error:#}", tr("write_failed")))
+                    }
+                }
+                cx.notify();
+            });
+        }));
+        cx.notify();
+    }
+
+    fn staging_button(
+        &self,
+        id: impl Into<ElementId>,
+        change: Change,
+        selection: StageSelection,
+        cx: &mut Context<Self>,
+    ) -> Button {
+        let checked = match selection {
+            StageSelection::File => change.area == Area::Staged,
+            StageSelection::Block(block) => self
+                .working
+                .staging_patch
+                .as_ref()
+                .is_some_and(|p| p.is_staged(block)),
+        };
+        let partial = selection == StageSelection::File && change.area == Area::Partial;
+        let label = tr(match (checked, selection) {
+            (false, StageSelection::File) => "stage_file",
+            (true, StageSelection::File) => "unstage_file",
+            (false, StageSelection::Block(_)) => "stage_block",
+            (true, StageSelection::Block(_)) => "unstage_block",
+        });
+        let patch = self.working.staging_patch.clone();
+        Button::new(id)
+            .icon(if checked {
+                IconName::SquareCheck
+            } else if partial {
+                IconName::SquareMinus
+            } else {
+                IconName::Square
+            })
+            .xsmall()
+            .ghost()
+            .toggled(checked)
+            .text_color(cx.theme().muted_foreground)
+            .disabled(self.staging_disabled() || change.area == Area::Conflict)
+            .tooltip(label)
+            .accessibility_label(format!("{label}: {}", change.path.display()))
+            .on_click(cx.listener(move |this, _, _, cx| {
+                cx.stop_propagation();
+                this.write_change(
+                    change.clone(),
+                    ChangeOperation::Stage(selection),
+                    patch.clone(),
+                    cx,
+                );
+            }))
+    }
+
+    fn staging_directory_button(
+        &self,
+        id: &str,
+        directory: &str,
+        indices: &[usize],
+        cx: &mut Context<Self>,
+    ) -> Button {
+        let changes = indices
+            .iter()
+            .map(|&i| self.working.changes[i].clone())
+            .collect::<Vec<_>>();
+        let (count, staged, conflict) =
+            changes
+                .iter()
+                .fold((0, 0, false), |(count, staged, conflict), change| {
+                    (
+                        count + 1,
+                        staged + usize::from(matches!(change.area, Area::Staged | Area::Partial)),
+                        conflict || change.area == Area::Conflict,
+                    )
+                });
+        let all_staged = count > 0 && changes.iter().all(|c| c.area == Area::Staged);
+        let label = tr(if all_staged {
+            "unstage_directory"
+        } else if staged > 0 {
+            "stage_directory_remaining"
+        } else {
+            "stage_directory"
+        });
+        let directory = directory.to_owned();
+        Button::new(format!("stage-folder:{id}"))
+            .icon(if all_staged {
+                IconName::SquareCheck
+            } else if staged > 0 {
+                IconName::SquareMinus
+            } else {
+                IconName::Square
+            })
+            .xsmall()
+            .ghost()
+            .toggled(all_staged)
+            .text_color(cx.theme().muted_foreground)
+            .disabled(self.staging_disabled() || count == 0 || conflict)
+            .tooltip(label)
+            .accessibility_label(format!(
+                "{label}: {}",
+                if directory.is_empty() {
+                    "."
+                } else {
+                    &directory
+                }
+            ))
+            .on_click(cx.listener(move |this, _, _, cx| {
+                cx.stop_propagation();
+                let changes = changes.clone();
+                this.write_repository(
+                    this.staging_anchor_side(),
+                    move |repo, mode| repo.set_files_staged(mode, &changes, !all_staged),
+                    cx,
+                );
+            }))
+    }
+
+    fn staging_gutter_actions(
+        &self,
+        position: &DiffLinePosition,
+        side: DiffSide,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let part = self
+            .working
+            .diff
+            .read(cx)
+            .files()
+            .iter()
+            .position(|file| file.path() == position.path())
+            .unwrap_or(0);
+        let block = self.working.staging_patch.as_ref().and_then(|patch| {
+            patch.block_target(
+                part,
+                position.side() == DiffSide::Original,
+                position.line(),
+                side == DiffSide::Original,
+            )
+        });
+        let Some(block) = block else {
+            return div().into_any_element();
+        };
+        let Some(change) = self
+            .working
+            .selected_file
+            .and_then(|i| self.working.changes.get(i))
+        else {
+            return div().into_any_element();
+        };
+        let (hover_opacity, active_opacity) = if cx.theme().mode.is_dark() {
+            (0.12, 0.18)
+        } else {
+            (0.06, 0.10)
+        };
+        let action_style = ButtonCustomVariant::new(cx)
+            .hover(cx.theme().foreground.opacity(hover_opacity))
+            .active(cx.theme().foreground.opacity(active_opacity));
+        if side == DiffSide::Modified {
+            return self
+                .staging_button(
+                    ("stage-block", block),
+                    change.clone(),
+                    StageSelection::Block(block),
+                    cx,
+                )
+                .custom(action_style)
+                .into_any_element();
+        }
+        if self
+            .working
+            .staging_patch
+            .as_ref()
+            .is_some_and(|patch| patch.is_staged(block))
+        {
+            return div().into_any_element();
+        }
+        let change = change.clone();
+        Button::new(("discard-block", block))
+            .icon(IconName::ChevronsRight)
+            .xsmall()
+            .custom(action_style)
+            .text_color(cx.theme().muted_foreground)
+            .disabled(self.staging_disabled())
+            .tooltip(tr("discard_block"))
+            .accessibility_label(tr("discard_block"))
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.confirm_discard(change.clone(), block, window, cx);
+            }))
+            .into_any_element()
+    }
+
+    fn confirm_discard(
+        &self,
+        change: Change,
+        block: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.staging_visible() || self.staging_disabled() {
+            return;
+        }
+        let Some(patch) = self.working.staging_patch.clone() else {
+            return;
+        };
+        let root = self.repository.as_ref().map(|repo| repo.root.clone());
+        let app = cx.entity().downgrade();
+        window.open_alert_dialog(cx, move |dialog, _, _| {
+            let app = app.clone();
+            let change = change.clone();
+            let patch = patch.clone();
+            let root = root.clone();
+            dialog
+                .confirm()
+                .title(tr("discard_block_title"))
+                .description(format!(
+                    "{}\n{}",
+                    change.path.display(),
+                    tr("discard_block_description")
+                ))
+                .ok_text(tr("discard_block"))
+                .ok_variant(ButtonVariant::Danger)
+                .cancel_text(tr("keep_changes"))
+                .on_ok(move |_, _, cx| {
+                    let _ = app.update(cx, |this, cx| {
+                        if this.repository.as_ref().map(|repo| &repo.root) == root.as_ref() {
+                            this.write_change(
+                                change.clone(),
+                                ChangeOperation::DiscardBlock(block),
+                                Some(patch.clone()),
+                                cx,
+                            );
+                        }
+                    });
+                    true
+                })
+        });
     }
 
     pub fn open_repository(&mut self, _: &OpenRepository, _: &mut Window, cx: &mut Context<Self>) {
@@ -415,6 +860,9 @@ impl Patchlook {
 
     /// Opening/refreshing a repository replaces its two snapshots. Tab changes never call this.
     fn load_repository(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        if self.write_task.is_some() {
+            return;
+        }
         self.load_task = None;
         self.working.cancel_pending();
         self.history.files.cancel_pending();
@@ -494,7 +942,7 @@ impl Patchlook {
     }
 
     fn remove_repository(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.loading {
+        if self.loading || self.write_task.is_some() {
             return;
         }
         let Some(index) = self.repository.as_ref().and_then(|repo| {
@@ -744,14 +1192,37 @@ impl Patchlook {
     }
 
     fn apply_changes(&mut self, source: Source, prepared: PreparedChanges, cx: &mut Context<Self>) {
-        let mut files = ChangeState::new(self.preferences.layout, cx);
-        files.loaded = true;
-        files.total_stats = Some(prepared.stats.iter().flatten().copied().sum());
-        files.change_tree = self.repository.as_ref().map(|repo| {
+        self.install_changes(source, prepared, None, cx);
+    }
+
+    fn install_changes(
+        &mut self,
+        source: Source,
+        prepared: PreparedChanges,
+        stable_side: Option<DiffSide>,
+        cx: &mut Context<Self>,
+    ) {
+        let previous = self.files_for(source);
+        let stable_side = stable_side.filter(|_| {
+            previous
+                .selected_file
+                .and_then(|i| previous.changes.get(i))
+                .is_some_and(|old| {
+                    prepared
+                        .changes
+                        .get(prepared.preview_index)
+                        .is_some_and(|new| old.path == new.path)
+                })
+        });
+        if stable_side.is_none() {
+            *self.files_for_mut(source) = ChangeState::new(self.preferences.layout, cx);
+        }
+        let mut tree = self.repository.as_ref().map(|repo| {
             ChangeTree::new(
                 &prepared.changes,
                 &prepared.stats,
                 &repo.root,
+                source == Source::Working,
                 cx,
                 move |this, index, cx| {
                     // Retained hidden trees must never drive the currently displayed data set.
@@ -763,16 +1234,24 @@ impl Patchlook {
                 },
             )
         });
+        if let Some(tree) = &mut tree {
+            tree.set_progress(prepared.progress.clone());
+        }
+        let files = self.files_for_mut(source);
+        files.progress = prepared.progress;
+        files.loaded = true;
+        files.error = None;
+        files.total_stats = Some(prepared.stats.iter().flatten().copied().sum());
+        files.change_tree = tree;
         files.changes = prepared.changes;
         files.file_stats = prepared.stats;
-        *self.files_for_mut(source) = files;
         if let Some(preview) = prepared.preview {
             let files = self.files_for_mut(source);
-            files.selected_file = Some(0);
+            files.selected_file = Some(prepared.preview_index);
             if let Some(tree) = &files.change_tree {
-                tree.reveal_file(0, cx);
+                tree.reveal_file(prepared.preview_index, cx);
             }
-            self.apply_file_result(source, preview, cx);
+            self.apply_file_result(source, preview, stable_side, cx);
         }
     }
 
@@ -780,24 +1259,42 @@ impl Patchlook {
         &mut self,
         source: Source,
         result: anyhow::Result<FileContent>,
+        stable_side: Option<DiffSide>,
         cx: &mut Context<Self>,
     ) {
         let files = self.files_for_mut(source);
         match result {
             Ok(content) => {
-                let (diffs, image) = match content {
-                    FileContent::Text(diffs) => (diffs, None),
-                    FileContent::Image(image) => (Vec::new(), Some(image)),
+                let (diffs, image, staging) = match content {
+                    FileContent::Text(diffs, staging) => (diffs, None, staging),
+                    FileContent::Image(image) => (Vec::new(), Some(image), None),
                 };
+                let same_content = stable_side.is_some()
+                    && files
+                        .staging_patch
+                        .as_ref()
+                        .zip(staging.as_ref())
+                        .is_some_and(|(old, new)| old.patches().eq(new.patches()));
+                files.staging_patch = staging;
                 files.empty_patch = diffs.is_empty() && image.is_none();
                 files.image = image.map(|image| cx.new(|_| ImageDiff::new(image)));
                 files.image_subscription = files
                     .image
                     .as_ref()
                     .map(|image| cx.observe(image, |_, _, cx| cx.notify()));
-                files.diff.update(cx, |diff, cx| diff.set_files(diffs, cx));
+                files.diff.update(cx, |diff, cx| {
+                    if same_content {
+                        return;
+                    }
+                    if let Some(side) = stable_side {
+                        diff.refresh_files(diffs, side, cx);
+                    } else {
+                        diff.set_files(diffs, cx);
+                    }
+                });
             }
             Err(error) => {
+                files.staging_patch = None;
                 files.image = None;
                 files.image_subscription = None;
                 files.diff.update(cx, |diff, cx| diff.set_files([], cx));
@@ -893,7 +1390,7 @@ impl Patchlook {
                 .await;
             let _ = this.update(cx, |this, cx| {
                 this.files_for_mut(source).patch_loading = false;
-                this.apply_file_result(source, result, cx);
+                this.apply_file_result(source, result, None, cx);
                 cx.notify();
             });
         }));
@@ -986,6 +1483,9 @@ impl Patchlook {
     fn set_language(&mut self, language: Language, window: &mut Window, cx: &mut Context<Self>) {
         self.preferences.language = language;
         apply_language(language, cx);
+        if let Some(tree) = &self.working.change_tree {
+            tree.update_group_labels(cx);
+        }
         self.history_search.update(cx, |input, cx| {
             input.set_placeholder(tr("search_commits_placeholder"), window, cx);
         });
@@ -1150,6 +1650,58 @@ fn list_scrollbar(id: &'static str, handle: &UniformListScrollHandle) -> Div {
 }
 
 impl Patchlook {
+    fn access_mode_switch(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let read_only = self.access_mode == AccessMode::ReadOnly;
+        let busy = self.write_task.is_some();
+        h_flex()
+            .gap_2()
+            .px_1()
+            .child(
+                div()
+                    .id("access-mode-indicator")
+                    .test_support()
+                    .size(px(6.))
+                    .flex_none()
+                    .rounded_full()
+                    .bg(if read_only {
+                        cx.theme().green
+                    } else {
+                        gpui_kit::component::orange_500()
+                    })
+                    .role(accesskit::Role::Label)
+                    .aria_label(tr(if read_only {
+                        "read_only_mode"
+                    } else {
+                        "read_write_mode"
+                    })),
+            )
+            .child(
+                Switch::new("access-mode")
+                    .xsmall()
+                    .py_1()
+                    .label(tr("read_only"))
+                    .label_side(gpui_kit::component::Side::Left)
+                    .checked(read_only)
+                    .color(cx.theme().muted_foreground.opacity(0.8))
+                    .focus_ring(false)
+                    .tooltip(tr("access_mode_help"))
+                    .tab_stop(!busy)
+                    // Keep the controlled value and appearance during a short write lock.
+                    .when(!busy, |switch| {
+                        switch.on_change(cx.listener(|this, read_only: &bool, _, cx| {
+                            this.set_access_mode(
+                                if *read_only {
+                                    AccessMode::ReadOnly
+                                } else {
+                                    AccessMode::ReadWrite
+                                },
+                                cx,
+                            );
+                        }))
+                    }),
+            )
+    }
+
     fn application_menu(&self, cx: &App) -> impl IntoElement {
         let fallback_focus = self.focus.clone();
         // Block the titlebar's native drag hitbox around the whole trigger.
@@ -1267,7 +1819,7 @@ impl Patchlook {
         let target = self.external_file_target();
         let app = cx.entity().downgrade();
         icon_button("open-with", IconName::ExternalLink, "open_with")
-            .when(target.is_some(), |button| {
+            .when(target.is_some() || self.write_task.is_some(), |button| {
                 button.text_color(cx.theme().muted_foreground)
             })
             .disabled(target.is_none())
@@ -1419,7 +1971,7 @@ impl Patchlook {
                         ),
                 )
                 .child(div().flex_1())
-                // Keep the dropdown's click-handling wrapper above the blocker.
+                .child(div().occlude().child(self.access_mode_switch(cx)))
                 .child(div().occlude().child(self.language_menu(cx)))
                 .child({
                     let (icon, current) = appearance_label(self.preferences.appearance);
@@ -1737,6 +2289,22 @@ impl Patchlook {
     }
 
     fn diff_header(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let stage_button = self
+            .staging_visible()
+            .then(|| {
+                self.working
+                    .selected_file
+                    .and_then(|i| self.working.changes.get(i))
+                    .map(|change| {
+                        self.staging_button(
+                            "stage-current-file",
+                            change.clone(),
+                            StageSelection::File,
+                            cx,
+                        )
+                    })
+            })
+            .flatten();
         let file = self.active_files().diff.read(cx).files().first();
         let image = self
             .active_files()
@@ -1782,6 +2350,7 @@ impl Patchlook {
             .when_some(path, |row, path| {
                 row.child(self.open_with_menu(cx)).child(file_icon(path))
             })
+            .when_some(stage_button, |row, button| row.child(button))
             .child(
                 div()
                     .flex_1()
@@ -2038,6 +2607,31 @@ impl Patchlook {
                         self.preferences.show_file_stats,
                         self.view == View::Working,
                         cx.listener(|this, index: &usize, _, cx| this.select_file(*index, cx)),
+                        self.staging_visible().then(|| {
+                            let app = cx.entity().downgrade();
+                            Rc::new(
+                                move |index: Option<usize>,
+                                      id: &str,
+                                      path: &str,
+                                      indices: &[usize],
+                                      cx: &mut App| {
+                                    app.update(cx, |this, cx| {
+                                        if let Some(index) = index {
+                                            this.staging_button(
+                                                ("stage-file", index),
+                                                this.working.changes[index].clone(),
+                                                StageSelection::File,
+                                                cx,
+                                            )
+                                        } else {
+                                            this.staging_directory_button(id, path, indices, cx)
+                                        }
+                                        .into_any_element()
+                                    })
+                                    .unwrap_or_else(|_| div().into_any_element())
+                                },
+                            ) as crate::change_tree::EntryActionRenderer
+                        }),
                         cx,
                     ))
                     .into_any_element()
@@ -2099,81 +2693,99 @@ impl Patchlook {
             .to_string_lossy()
             .into_owned();
         let caption = if self.view == View::Working {
-            area_label(change.area)
+            crate::change_tree::working_caption(
+                change.area,
+                self.active_files().progress.get(index).copied().flatten(),
+            )
         } else {
-            status_label(change.status)
+            status_label(change.status).to_owned()
         };
         let status_color = file_status_color(change.status, cx);
-        div().h(px(50.)).px_2().pb_1().child(
-            Button::new(("file", index))
-                .custom(
-                    ButtonCustomVariant::new(cx)
-                        .hover(cx.theme().list_hover)
-                        .active(cx.theme().secondary_active),
-                )
-                .w_full()
-                .h_full()
-                .justify_start()
-                .px_2()
-                .border_0()
-                .selected(self.active_files().selected_file == Some(index))
-                .tooltip(change.path.display().to_string())
-                .accessibility_label(format!("{}, {}", change.path.display(), caption))
-                .child(
-                    h_flex()
-                        .gap_2()
-                        .w_full()
-                        .min_w_0()
-                        .child(file_icon(&change.path).size(px(20.)))
-                        .child(
-                            v_flex()
-                                .min_w_0()
-                                .flex_1()
-                                .items_start()
-                                .child(
-                                    h_flex()
-                                        .w_full()
-                                        .gap_2()
-                                        .child(
-                                            div()
-                                                .flex_1()
-                                                .min_w_0()
-                                                .text_sm()
-                                                .text_color(status_color)
-                                                .truncate()
-                                                .child(filename),
-                                        )
-                                        .when_some(
-                                            self.active_files()
-                                                .file_stats
-                                                .get(index)
-                                                .copied()
-                                                .filter(|_| self.preferences.show_file_stats),
-                                            |row, stats| row.child(stats_label(stats, cx)),
-                                        ),
-                                )
-                                .child(
-                                    h_flex()
-                                        .w_full()
-                                        .gap_2()
-                                        .text_xs()
-                                        .text_color(cx.theme().muted_foreground)
-                                        .child(
-                                            div().flex_1().min_w_0().truncate().child(
-                                                change
-                                                    .path
-                                                    .parent()
-                                                    .filter(|path| !path.as_os_str().is_empty())
-                                                    .map(|path| path.display().to_string())
-                                                    .unwrap_or_else(|| ".".into()),
+        h_flex()
+            .h(px(50.))
+            .w_full()
+            .px_2()
+            .pb_1()
+            .gap_2()
+            .when(self.staging_visible(), |row| {
+                row.child(self.staging_button(
+                    ("stage-file", index),
+                    change.clone(),
+                    StageSelection::File,
+                    cx,
+                ))
+            })
+            .child(
+                Button::new(("file", index))
+                    .custom(
+                        ButtonCustomVariant::new(cx)
+                            .hover(cx.theme().list_hover)
+                            .active(cx.theme().secondary_active),
+                    )
+                    .flex_1()
+                    .min_w_0()
+                    .h_full()
+                    .justify_start()
+                    .px_2()
+                    .border_0()
+                    .selected(self.active_files().selected_file == Some(index))
+                    .tooltip(change.path.display().to_string())
+                    .accessibility_label(format!("{}, {}", change.path.display(), caption))
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .w_full()
+                            .min_w_0()
+                            .child(file_icon(&change.path).size(px(20.)))
+                            .child(
+                                v_flex()
+                                    .min_w_0()
+                                    .flex_1()
+                                    .items_start()
+                                    .child(
+                                        h_flex()
+                                            .w_full()
+                                            .gap_2()
+                                            .child(
+                                                div()
+                                                    .flex_1()
+                                                    .min_w_0()
+                                                    .text_sm()
+                                                    .text_color(status_color)
+                                                    .truncate()
+                                                    .child(filename),
+                                            )
+                                            .when_some(
+                                                self.active_files()
+                                                    .file_stats
+                                                    .get(index)
+                                                    .copied()
+                                                    .filter(|_| self.preferences.show_file_stats),
+                                                |row, stats| row.child(stats_label(stats, cx)),
                                             ),
-                                        )
-                                        .child(div().flex_none().child(caption)),
-                                ),
-                        ),
-                )
-                .on_click(cx.listener(move |this, _, _, cx| this.select_file(index, cx))),
-        )
+                                    )
+                                    .child(
+                                        h_flex()
+                                            .w_full()
+                                            .gap_2()
+                                            .text_xs()
+                                            .text_color(cx.theme().muted_foreground)
+                                            .child(
+                                                div().flex_1().min_w_0().truncate().child(
+                                                    change
+                                                        .path
+                                                        .parent()
+                                                        .filter(|path| !path.as_os_str().is_empty())
+                                                        .map(|path| path.display().to_string())
+                                                        .unwrap_or_else(|| ".".into()),
+                                                ),
+                                            )
+                                            .child(div().flex_none().child(caption)),
+                                    ),
+                            ),
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| this.select_file(index, cx))),
+            )
     }
 
     fn history(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -2385,12 +2997,80 @@ impl Patchlook {
             image.clone().into_any_element()
         } else if self.active_files().selected_file.is_some() {
             Diff::new(&self.active_files().diff)
+                .line_number_selection(false)
+                .when(
+                    self.staging_visible() && self.working.staging_patch.is_some(),
+                    |diff| {
+                        let app = cx.entity().downgrade();
+                        diff.render_gutter_actions(move |position, side, cx| {
+                            app.update(cx, |this, cx| {
+                                this.staging_gutter_actions(position, side, cx)
+                            })
+                            .unwrap_or_else(|_| div().into_any_element())
+                        })
+                    },
+                )
                 .when_some(
                     cx.theme().highlight_theme.style.editor_foreground,
                     |diff, color| diff.text_color(color),
                 )
                 .change_indicator(DiffChangeIndicator::Bars)
-                .header_visible(false)
+                .header_visible(
+                    self.view == View::Working
+                        && self
+                            .working
+                            .staging_patch
+                            .as_ref()
+                            .is_some_and(|p| p.separate_versions()),
+                )
+                .when(self.view == View::Working, |diff| {
+                    let review = self.working.staging_patch.clone();
+                    let paths = self
+                        .working
+                        .diff
+                        .read(cx)
+                        .files()
+                        .iter()
+                        .map(|f| f.path().clone())
+                        .collect::<Vec<_>>();
+                    let header_review = review.clone();
+                    let header_paths = paths.clone();
+                    diff.change_background_opacity(move |position, _| {
+                        let staged = paths
+                            .iter()
+                            .position(|path| path == position.path())
+                            .is_some_and(|part| {
+                                review.as_ref().is_some_and(|p| {
+                                    p.line_staged(
+                                        part,
+                                        position.side() == DiffSide::Original,
+                                        position.line(),
+                                    )
+                                })
+                            });
+                        if staged {
+                            STAGED_CHANGE_BACKGROUND_OPACITY
+                        } else {
+                            1.0
+                        }
+                    })
+                    .render_header(move |file, _, cx| {
+                        let area = header_paths
+                            .iter()
+                            .position(|path| path == file.path())
+                            .and_then(|part| header_review.as_ref()?.part_area(part));
+                        div()
+                            .px_3()
+                            .py_1()
+                            .text_sm()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(tr(if area == Some(Area::Staged) {
+                                "review_index"
+                            } else {
+                                "review_worktree"
+                            }))
+                    })
+                })
                 .soft_wrap(self.preferences.soft_wrap)
                 .hunk_separator(DiffHunkSeparator::Wave)
                 .size_full()
@@ -2752,6 +3432,8 @@ mod tests {
 
     fn test_app(window: &mut Window, cx: &mut Context<Patchlook>) -> Patchlook {
         Patchlook {
+            access_mode: AccessMode::default(),
+            write_task: None,
             working: ChangeState::new(Layout::Split, cx),
             history: HistoryState::new(Layout::Split, cx),
             preferences: Preferences::default(),
@@ -2780,11 +3462,644 @@ mod tests {
     }
 
     #[gpui_kit::test]
+    fn staging_modes_and_buttons_update_the_index_in_both_diff_layouts(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            cx.set_reduce_motion(true);
+        });
+        for layout in [Layout::Split, Layout::Inline] {
+            let directory = tempfile::tempdir().unwrap();
+            git(directory.path(), &["init", "-b", "main"]);
+            std::fs::write(directory.path().join("f.txt"), "a\nb\nc\nd\n").unwrap();
+            git(directory.path(), &["add", "f.txt"]);
+            git(directory.path(), &["commit", "-m", "base"]);
+            let working = "a\nB\nc\nD\n";
+            std::fs::write(directory.path().join("f.txt"), working).unwrap();
+            let index_text = || {
+                let result = std::process::Command::new("git")
+                    .arg("-C")
+                    .arg(directory.path())
+                    .args(["show", ":f.txt"])
+                    .output()
+                    .unwrap();
+                assert!(result.status.success());
+                String::from_utf8(result.stdout).unwrap()
+            };
+            let (handle, app) = cx.update(|cx| {
+                gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                    cx.new(|cx| {
+                        let mut app = test_app(window, cx);
+                        app.preferences.layout = layout;
+                        app.load(directory.path().to_owned(), cx);
+                        app
+                    })
+                })
+                .unwrap()
+            });
+            cx.run_until_parked();
+            let mut source_positions = Vec::new();
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                window.render_frame(cx);
+                source_positions = window
+                    .find_all("source")
+                    .iter()
+                    .map(|el| el.bounds().left())
+                    .collect::<Vec<_>>();
+                assert!(!source_positions.is_empty());
+                assert_eq!(app.read(cx).access_mode, AccessMode::ReadOnly);
+                assert_eq!(window.find("access-mode").checked(), Some(true));
+                assert!(window.try_find("stage-current-file").is_none());
+                let number = window.within(("new", 0usize)).find_all(("line", 0usize))[0].bounds();
+                for position in [
+                    number.center(),
+                    point(number.left() + px(2.), number.center().y),
+                ] {
+                    window.drag(position, position, cx);
+                    assert!(
+                        app.read(cx)
+                            .working
+                            .diff
+                            .read(cx)
+                            .selected_lines()
+                            .is_none(),
+                        "the line-number gutter must not select a whole line"
+                    );
+                    assert!(
+                        app.read(cx)
+                            .working
+                            .diff
+                            .read(cx)
+                            .selected_text(cx)
+                            .is_empty()
+                    );
+                }
+                app.update(cx, |app, cx| {
+                    app.write_change(
+                        app.working.changes[0].clone(),
+                        ChangeOperation::Stage(StageSelection::File),
+                        None,
+                        cx,
+                    );
+                    assert!(app.write_task.is_none());
+                });
+                window.click("access-mode", cx);
+            })
+            .unwrap();
+            cx.run_until_parked();
+
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                window.render_frame(cx);
+                assert_eq!(
+                    source_positions,
+                    window
+                        .find_all("source")
+                        .iter()
+                        .map(|el| el.bounds().left())
+                        .collect::<Vec<_>>()
+                );
+                assert_eq!(app.read(cx).access_mode, AccessMode::ReadWrite);
+                assert_eq!(window.find("access-mode").checked(), Some(false));
+                assert!(window.try_find("popup-menu").is_none());
+                assert!(window.try_find(("stage-line", 2usize)).is_none());
+                assert!(window.try_find(("discard-block", 0usize)).is_some());
+                assert_eq!(window.find(("stage-block", 0usize)).checked(), Some(false));
+                window.click(("stage-block", 0usize), cx);
+                assert!(
+                    app.read(cx)
+                        .working
+                        .diff
+                        .read(cx)
+                        .selected_lines()
+                        .is_none(),
+                    "staging a block must not select its source line"
+                );
+                assert!(
+                    app.read(cx)
+                        .working
+                        .diff
+                        .read(cx)
+                        .selected_text(cx)
+                        .is_empty()
+                );
+                app.update(cx, |app, cx| {
+                    // An in-flight write cannot be relabelled read-only or duplicated.
+                    app.set_access_mode(AccessMode::ReadOnly, cx);
+                    assert_eq!(app.access_mode, AccessMode::ReadWrite);
+                });
+                window.render_frame(cx);
+                assert_eq!(window.find("access-mode").checked(), Some(false));
+                assert_eq!(window.find("open-with").disabled(), Some(true));
+                for trigger in ["access-mode", "open-with"] {
+                    window.click(trigger, cx);
+                    window.render_frame(cx);
+                    assert!(
+                        window.try_find("popup-menu").is_none(),
+                        "a visually stable write lock must still block the menu"
+                    );
+                }
+                assert_eq!(app.read(cx).access_mode, AccessMode::ReadWrite);
+                assert_eq!(window.find("access-mode").checked(), Some(false));
+            })
+            .unwrap();
+            cx.run_until_parked();
+            assert_eq!(index_text(), "a\nB\nc\nd\n");
+            cx.update(|cx| {
+                app.update(cx, |app, cx| {
+                    assert!(app.working.error.is_none(), "{:?}", app.working.error);
+                    assert_eq!(app.working.changes.len(), 1);
+                    assert_eq!(app.working.changes[0].area, Area::Partial);
+                    assert_eq!(
+                        app.working.staging_patch.as_ref().unwrap().progress(),
+                        (1, 2)
+                    );
+                    assert_eq!(app.working.diff.read(cx).files()[0].change_block_count(), 2);
+                })
+            });
+            cx.run_until_parked();
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                window.render_frame(cx);
+                assert!(window.try_find(("discard-block", 0usize)).is_none());
+                assert_eq!(window.find(("stage-block", 0usize)).checked(), Some(true));
+                window.click(("stage-block", 0usize), cx);
+            })
+            .unwrap();
+            cx.run_until_parked();
+            assert_eq!(index_text(), "a\nb\nc\nd\n");
+            for tree in [false, true] {
+                for expected in [working, "a\nb\nc\nd\n"] {
+                    cx.update_window(handle, |_, window, cx| {
+                        app.update(cx, |app, cx| {
+                            app.preferences.tree_file_list = tree;
+                            cx.notify();
+                        });
+                        window.render_frame(cx);
+                        window.render_frame(cx);
+                        window.click(("stage-file", 0usize), cx);
+                    })
+                    .unwrap();
+                    cx.run_until_parked();
+                    assert_eq!(index_text(), expected);
+                }
+            }
+            for confirm in [false, true] {
+                cx.update_window(handle, |_, window, cx| {
+                    window.render_frame(cx);
+                    window.render_frame(cx);
+                    window.click(("discard-block", 0usize), cx);
+                })
+                .unwrap();
+                cx.run_until_parked();
+                assert_eq!(
+                    std::fs::read_to_string(directory.path().join("f.txt")).unwrap(),
+                    working
+                );
+                cx.update_window(handle, |_, window, cx| {
+                    window.render_frame(cx);
+                    window.render_frame(cx);
+                    window.click(if confirm { "ok" } else { "cancel" }, cx);
+                })
+                .unwrap();
+                cx.run_until_parked();
+                assert_eq!(index_text(), "a\nb\nc\nd\n");
+                assert_eq!(
+                    std::fs::read_to_string(directory.path().join("f.txt")).unwrap(),
+                    if confirm { "a\nb\nc\nD\n" } else { working }
+                );
+                cx.update(|cx| {
+                    assert!(
+                        app.read(cx).working.error.is_none(),
+                        "{:?}",
+                        app.read(cx).working.error
+                    )
+                });
+            }
+            cx.update_window(handle, |_, window, cx| {
+                app.update(cx, |app, cx| app.switch_view(View::History, cx));
+                window.render_frame(cx);
+                assert!(window.try_find("stage-current-file").is_none());
+                assert!(window.try_find(("stage-file", 0usize)).is_none());
+                window.click("access-mode", cx);
+                window.render_frame(cx);
+                assert_eq!(app.read(cx).access_mode, AccessMode::ReadOnly);
+                assert_eq!(window.find("access-mode").checked(), Some(true));
+                assert!(window.try_find("popup-menu").is_none());
+            })
+            .unwrap();
+            cx.run_until_parked();
+            assert_eq!(
+                std::fs::read_to_string(directory.path().join("f.txt")).unwrap(),
+                "a\nb\nc\nD\n"
+            );
+        }
+    }
+
+    #[gpui_kit::test]
+    fn untracked_group_is_collapsible_and_stages_only_its_own_files(cx: &mut TestAppContext) {
+        cx.update(gpui_kit::init);
+        let directory = tempfile::tempdir().unwrap();
+        git(directory.path(), &["init", "-b", "main"]);
+        std::fs::create_dir(directory.path().join("src")).unwrap();
+        std::fs::write(directory.path().join("src/tracked.rs"), "old\n").unwrap();
+        git(directory.path(), &["add", "-A"]);
+        git(directory.path(), &["commit", "-m", "base"]);
+        std::fs::write(directory.path().join("src/tracked.rs"), "new\n").unwrap();
+        std::fs::write(directory.path().join("src/new.rs"), "added\n").unwrap();
+        let (handle, app) = cx.update(|cx| {
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                cx.new(|cx| {
+                    let mut app = test_app(window, cx);
+                    app.preferences.tree_file_list = true;
+                    app.access_mode = AccessMode::ReadWrite;
+                    app.load(directory.path().to_owned(), cx);
+                    app
+                })
+            })
+            .unwrap()
+        });
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.render_frame(cx);
+            assert!(window.find("tree-tracked").visible());
+            assert!(window.find("tree-untracked").visible());
+            assert!(window.find("stage-folder:untracked:src").visible());
+            window.click("tree-untracked", cx);
+            window.render_frame(cx);
+            assert!(window.try_find("stage-folder:untracked:src").is_none());
+            assert!(window.find("stage-folder:src").visible());
+            window.click("tree-untracked", cx);
+            window.render_frame(cx);
+            window.click("stage-folder:tree-untracked", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.render_frame(cx);
+            let app = app.read(cx);
+            assert!(app.working.error.is_none(), "{:?}", app.working.error);
+            assert_eq!(app.working.changes.len(), 2);
+            assert!(app.working.changes.iter().any(|c| c.path == std::path::Path::new("src/tracked.rs") && c.area == Area::Unstaged));
+            assert!(app.working.changes.iter().any(|c| c.path == std::path::Path::new("src/new.rs") && c.area == Area::Staged));
+            assert!(window.try_find("tree-untracked").is_none());
+        }).unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn folder_controls_stage_descendants_and_keep_neighboring_paths_unchanged(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(gpui_kit::init);
+        let directory = tempfile::tempdir().unwrap();
+        git(directory.path(), &["init", "-b", "main"]);
+        std::fs::create_dir_all(directory.path().join("src/deep")).unwrap();
+        std::fs::create_dir(directory.path().join("src-other")).unwrap();
+        for path in ["src/a.txt", "src/deep/b.txt", "src-other/c.txt"] {
+            std::fs::write(directory.path().join(path), "base\n").unwrap();
+        }
+        git(directory.path(), &["add", "-A"]);
+        git(directory.path(), &["commit", "-m", "base"]);
+        std::fs::write(directory.path().join("src/a.txt"), "staged\n").unwrap();
+        git(directory.path(), &["add", "src/a.txt"]);
+        std::fs::write(directory.path().join("src/a.txt"), "latest\n").unwrap();
+        std::fs::write(directory.path().join("src/deep/b.txt"), "nested\n").unwrap();
+        std::fs::write(directory.path().join("src-other/c.txt"), "outside\n").unwrap();
+        let (handle, app) = cx.update(|cx| {
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                cx.new(|cx| {
+                    let mut app = test_app(window, cx);
+                    app.preferences.tree_file_list = true;
+                    app.load(directory.path().to_owned(), cx);
+                    app
+                })
+            })
+            .unwrap()
+        });
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.render_frame(cx);
+            assert!(window.try_find("stage-folder:src").is_none());
+            app.update(cx, |app, cx| app.set_access_mode(AccessMode::ReadWrite, cx));
+            window.render_frame(cx);
+            window.render_frame(cx);
+            assert_eq!(window.find("stage-folder:src").checked(), Some(false));
+            assert_eq!(
+                window.find("stage-folder:src").label(),
+                Some(format!("{}: src", tr("stage_directory_remaining")).as_str())
+            );
+            window.click("stage-folder:src", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.render_frame(cx);
+            let app = app.read(cx);
+            assert!(app.working.error.is_none(), "{:?}", app.working.error);
+            assert!(
+                app.working
+                    .changes
+                    .iter()
+                    .filter(|c| c.path.starts_with("src"))
+                    .all(|c| c.area == Area::Staged)
+            );
+            assert!(
+                app.working
+                    .changes
+                    .iter()
+                    .any(|c| c.path.starts_with("src-other") && c.area == Area::Unstaged)
+            );
+            assert_eq!(window.find("stage-folder:src").checked(), Some(true));
+            assert!(
+                window.find("stage-folder:src/deep").visible(),
+                "staging must not collapse the folder"
+            );
+            window.click("stage-folder:src", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.render_frame(cx);
+            assert!(
+                app.read(cx).working.error.is_none(),
+                "{:?}",
+                app.read(cx).working.error
+            );
+            assert!(
+                app.read(cx)
+                    .working
+                    .changes
+                    .iter()
+                    .all(|c| c.area == Area::Unstaged)
+            );
+            assert_eq!(window.find("stage-folder:src").checked(), Some(false));
+            // The root uses the same operation, covering every descendant.
+            window.click("stage-folder:", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update(|cx| {
+            assert!(
+                app.read(cx)
+                    .working
+                    .changes
+                    .iter()
+                    .all(|c| c.area == Area::Staged)
+            )
+        });
+        assert_eq!(
+            std::fs::read_to_string(directory.path().join("src/a.txt")).unwrap(),
+            "latest\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(directory.path().join("src/deep/b.txt")).unwrap(),
+            "nested\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(directory.path().join("src-other/c.txt")).unwrap(),
+            "outside\n"
+        );
+    }
+
+    #[gpui_kit::test]
+    fn block_writes_preserve_reading_position_and_expanded_context(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            cx.set_reduce_motion(true);
+        });
+        for layout in [Layout::Split, Layout::Inline] {
+            for operation in [
+                ChangeOperation::Stage(StageSelection::Block(1)),
+                ChangeOperation::DiscardBlock(1),
+            ] {
+                for staged in [false, true] {
+                    if staged && matches!(operation, ChangeOperation::DiscardBlock(_)) {
+                        continue;
+                    }
+                    let directory = tempfile::tempdir().unwrap();
+                    git(directory.path(), &["init", "-b", "main"]);
+                    let base = (1..=60)
+                        .map(|i| {
+                            format!(
+                                "context_{i:02}: {}\n",
+                                "long wrapped source text / ".repeat(5)
+                            )
+                        })
+                        .collect::<String>();
+                    std::fs::write(directory.path().join("f.txt"), &base).unwrap();
+                    git(directory.path(), &["add", "f.txt"]);
+                    git(directory.path(), &["commit", "-m", "base"]);
+                    let changed = base
+                        .replace("context_05", "changed_05")
+                        .replace("context_25", "changed_25")
+                        .replace("context_55", "changed_55");
+                    std::fs::write(directory.path().join("f.txt"), &changed).unwrap();
+                    if staged {
+                        git(directory.path(), &["add", "f.txt"]);
+                    }
+                    let (handle, app) = cx.update(|cx| {
+                        gpui_kit::open_window(
+                            WindowOptions {
+                                window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                                    Point::default(),
+                                    size(px(1200.), px(900.)),
+                                ))),
+                                ..Default::default()
+                            },
+                            cx,
+                            |window, cx| {
+                                cx.new(|cx| {
+                                    let mut app = test_app(window, cx);
+                                    app.preferences.layout = layout;
+                                    app.preferences.soft_wrap = true;
+                                    app.access_mode = AccessMode::ReadWrite;
+                                    app.load(directory.path().to_owned(), cx);
+                                    app
+                                })
+                            },
+                        )
+                        .unwrap()
+                    });
+                    cx.run_until_parked();
+                    let mut before = px(0.);
+                    cx.update_window(handle, |_, window, cx| {
+                        window.render_frame(cx);
+                        window.render_frame(cx);
+                        app.read(cx).working.diff.clone().update(cx, |diff, cx| {
+                            diff.expand_unchanged(cx);
+                            diff.scroll_to_line(
+                                DiffLinePosition::new("f.txt", DiffSide::Modified, 20),
+                                cx,
+                            );
+                        });
+                        window.render_frame(cx);
+                        window.render_frame(cx);
+                        window.scroll(
+                            "diff-body",
+                            ScrollDelta::Pixels(point(px(0.), px(-9.5))),
+                            cx,
+                        );
+                        window.render_frame(cx);
+                        window.render_frame(cx);
+                        before = window
+                            .within(("new", 19usize))
+                            .find("source")
+                            .bounds()
+                            .top();
+                        window.click(
+                            (
+                                if matches!(operation, ChangeOperation::Stage(_)) {
+                                    "stage-block"
+                                } else {
+                                    "discard-block"
+                                },
+                                1usize,
+                            ),
+                            cx,
+                        );
+                    })
+                    .unwrap();
+                    cx.run_until_parked();
+                    if matches!(operation, ChangeOperation::DiscardBlock(_)) {
+                        cx.update_window(handle, |_, window, cx| {
+                            window.render_frame(cx);
+                            window.render_frame(cx);
+                            window.click("ok", cx);
+                        })
+                        .unwrap();
+                        cx.run_until_parked();
+                    }
+                    cx.update_window(handle, |_, window, cx| {
+                        window.render_frame(cx);
+                        window.render_frame(cx);
+                        assert!(
+                            app.read(cx).working.error.is_none(),
+                            "{:?}",
+                            app.read(cx).working.error
+                        );
+                        assert!(
+                            !app.read(cx).working.diff.read(cx).has_collapsed_context(),
+                            "refresh collapsed the reading context"
+                        );
+                        let after = window
+                            .within(("new", 19usize))
+                            .find("source")
+                            .bounds()
+                            .top();
+                        assert!(
+                            (before - after).abs() < px(1.),
+                            "reading position moved from {before:?} to {after:?}"
+                        );
+                    })
+                    .unwrap();
+                }
+            }
+        }
+    }
+
+    #[gpui_kit::test]
+    fn block_controls_work_when_one_diff_side_is_empty(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            cx.set_reduce_motion(true);
+        });
+        for layout in [Layout::Split, Layout::Inline] {
+            // A pure addition, pure deletion, a new file and a deleted file.
+            for (before, after) in [
+                (Some("a\nb\n"), Some("a\nnew\nb\n")),
+                (Some("a\nold\nb\n"), Some("a\nb\n")),
+                (None, Some("new\nfile")),
+                (Some("old\nfile"), None),
+            ] {
+                let directory = tempfile::tempdir().unwrap();
+                git(directory.path(), &["init", "-b", "main"]);
+                if let Some(text) = before {
+                    std::fs::write(directory.path().join("f.txt"), text).unwrap();
+                }
+                git(directory.path(), &["add", "-A"]);
+                git(directory.path(), &["commit", "--allow-empty", "-m", "base"]);
+                if let Some(text) = after {
+                    std::fs::write(directory.path().join("f.txt"), text).unwrap();
+                } else {
+                    std::fs::remove_file(directory.path().join("f.txt")).unwrap();
+                }
+                let (handle, app) = cx.update(|cx| {
+                    gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                        cx.new(|cx| {
+                            let mut app = test_app(window, cx);
+                            app.preferences.layout = layout;
+                            app.access_mode = AccessMode::ReadWrite;
+                            app.load(directory.path().to_owned(), cx);
+                            app
+                        })
+                    })
+                    .unwrap()
+                });
+                cx.run_until_parked();
+                // Stage and unstage through the same gutter, including its empty side.
+                for _ in 0..2 {
+                    cx.update_window(handle, |_, window, cx| {
+                        window.render_frame(cx);
+                        window.render_frame(cx);
+                        assert_eq!(window.find_all(("stage-block", 0usize)).len(), 1);
+                        window.click(("stage-block", 0usize), cx);
+                    })
+                    .unwrap();
+                    cx.run_until_parked();
+                    cx.update(|cx| {
+                        assert!(
+                            app.read(cx).working.error.is_none(),
+                            "{:?}",
+                            app.read(cx).working.error
+                        )
+                    });
+                }
+                cx.update_window(handle, |_, window, cx| {
+                    window.render_frame(cx);
+                    window.render_frame(cx);
+                    assert_eq!(window.find_all(("discard-block", 0usize)).len(), 1);
+                    window.click(("discard-block", 0usize), cx);
+                })
+                .unwrap();
+                cx.run_until_parked();
+                cx.update_window(handle, |_, window, cx| {
+                    window.render_frame(cx);
+                    window.render_frame(cx);
+                    window.click("ok", cx);
+                })
+                .unwrap();
+                cx.run_until_parked();
+                cx.update(|cx| {
+                    assert!(
+                        app.read(cx).working.error.is_none(),
+                        "{:?}",
+                        app.read(cx).working.error
+                    )
+                });
+                assert_eq!(
+                    std::fs::read_to_string(directory.path().join("f.txt"))
+                        .ok()
+                        .as_deref(),
+                    before
+                );
+                let repo = Repository::open(directory.path()).unwrap();
+                assert!(repo.snapshot().unwrap().changes.is_empty());
+            }
+        }
+    }
+
+    #[gpui_kit::test]
     fn isolated_file_selections_load_immediately_but_bursts_wait_for_the_last_file(
         cx: &mut TestAppContext,
     ) {
         cx.update(gpui_kit::init);
         let directory = tempfile::tempdir().unwrap();
+        git(directory.path(), &["init", "-b", "main"]);
         let names = ["go.mod", "go.sum", "main.go"];
         for name in names {
             std::fs::write(directory.path().join(name), format!("{name}\n")).unwrap();
@@ -2899,7 +4214,13 @@ mod tests {
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
             window.render_frame(cx);
-            let mut controls = vec!["open-repository", "refresh", "language", "theme"];
+            let mut controls = vec![
+                "open-repository",
+                "refresh",
+                "access-mode",
+                "language",
+                "theme",
+            ];
             if cfg!(any(target_os = "windows", target_os = "linux")) {
                 controls.push("application-menu");
             } else {
@@ -3657,14 +4978,16 @@ mod tests {
                         app.apply_changes(
                             Source::History,
                             PreparedChanges {
+                                progress: Vec::new(),
                                 changes,
                                 stats,
                                 preview: None,
+                                preview_index: 0,
                             },
                             cx,
                         );
                         app.history.files.selected_file = Some(previous);
-                        app.apply_file_result(Source::History, Ok(content), cx);
+                        app.apply_file_result(Source::History, Ok(content), None, cx);
                         app
                     })
                 })
@@ -3750,6 +5073,7 @@ mod tests {
     fn file_navigation_keeps_header_and_code_until_replacement_is_ready(cx: &mut TestAppContext) {
         cx.update(gpui_kit::init);
         let directory = tempfile::tempdir().unwrap();
+        git(directory.path(), &["init", "-b", "main"]);
         std::fs::write(directory.path().join("next.rs"), "NEXT\n").unwrap();
         let root = directory.path().to_path_buf();
         let (handle, app) = cx.update(|cx| {

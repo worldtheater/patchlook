@@ -49,6 +49,7 @@ pub fn language_name(language: Language) -> &'static str {
 pub fn area_label(area: Area) -> &'static str {
     tr(match area {
         Area::Staged => "staged",
+        Area::Partial => "partially_staged",
         Area::Unstaged => "unstaged",
         Area::Untracked => "untracked",
         Area::Conflict => "conflict",

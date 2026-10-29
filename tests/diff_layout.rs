@@ -12,6 +12,68 @@ struct Viewer {
     wrap: bool,
 }
 
+#[gpui_kit::test]
+fn related_patch_refresh_keeps_wrapped_and_horizontal_scroll_offsets(cx: &mut TestAppContext) {
+    use gpui_kit::component::diff::DiffSide;
+    cx.update(gpui_kit::init);
+    let long = format!("stable source {}", "abcdefgh 0123456789 ".repeat(240));
+    let before = format!("--- a/f.txt\n+++ b/f.txt\n@@ -1,2 +1,2 @@\n-old\n+new\n {long}\n");
+    let after = format!("--- a/f.txt\n+++ b/f.txt\n@@ -1,2 +1,2 @@\n-old\n+next\n {long}\n");
+    for mode in [DiffMode::Split, DiffMode::Unified] {
+        for wrap in [false, true] {
+            let (handle, viewer) = cx.update(|cx| {
+                gpui_kit::open_window(
+                    WindowOptions {
+                        window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                            Point::default(),
+                            size(px(1000.), px(600.)),
+                        ))),
+                        ..Default::default()
+                    },
+                    cx,
+                    |_, cx| {
+                        cx.new(|cx| Viewer {
+                            state: cx.new(|cx| {
+                                DiffState::new(DiffFile::parse(&before).unwrap(), cx)
+                                    .with_mode(mode)
+                            }),
+                            wrap,
+                        })
+                    },
+                )
+                .unwrap()
+            });
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                window.render_frame(cx);
+                window.scroll(
+                    "diff-body",
+                    ScrollDelta::Pixels(if wrap {
+                        point(px(0.), px(-187.5))
+                    } else {
+                        point(px(-250.), px(0.))
+                    }),
+                    cx,
+                );
+                window.render_frame(cx);
+                window.render_frame(cx);
+                let row = window.within(("new", 1usize));
+                let top = row.find("source").bounds().top();
+                let text_left = row.find("code-content").bounds().left();
+                viewer.read(cx).state.clone().update(cx, |state, cx| {
+                    state.refresh_files(DiffFile::parse(&after).unwrap(), DiffSide::Original, cx);
+                });
+                window.render_frame(cx);
+                window.render_frame(cx);
+                let row = window.within(("new", 1usize));
+                assert!((row.find("source").bounds().top() - top).abs() < px(1.));
+                assert!((row.find("code-content").bounds().left() - text_left).abs() < px(1.));
+            })
+            .unwrap();
+        }
+    }
+}
+
 impl Render for Viewer {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         Diff::new(&self.state)
@@ -515,6 +577,93 @@ fn text_diff_stays_still_after_an_interior_trackpad_release(cx: &mut TestAppCont
                     row.bounds(),
                     baseline,
                     "the code must not move after releasing away from either edge"
+                );
+            })
+            .unwrap();
+        }
+    }
+}
+
+#[gpui_kit::test]
+fn gutter_actions_are_isolated_and_line_selection_can_be_disabled(cx: &mut TestAppContext) {
+    use gpui_kit::assets::IconName;
+    use gpui_kit::component::{
+        Sizable,
+        button::{Button, ButtonVariants},
+        diff::DiffSide,
+    };
+    use gpui_kit::{App, div};
+    use std::{cell::Cell, rc::Rc};
+
+    struct ActionViewer {
+        state: Entity<DiffState>,
+        line_selection: bool,
+        clicks: Rc<Cell<usize>>,
+    }
+    impl Render for ActionViewer {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let clicks = self.clicks.clone();
+            Diff::new(&self.state)
+                .line_number_selection(self.line_selection)
+                .header_visible(false)
+                .render_gutter_actions(move |position, side, _: &mut App| {
+                    if side == DiffSide::Modified && position.side() == side && position.line() == 1
+                    {
+                        let clicks = clicks.clone();
+                        Button::new("review-toggle")
+                            .icon(IconName::Square)
+                            .xsmall()
+                            .ghost()
+                            .on_click(move |_, _, _| clicks.set(clicks.get() + 1))
+                            .into_any_element()
+                    } else {
+                        div().into_any_element()
+                    }
+                })
+                .size_full()
+        }
+    }
+    cx.update(gpui_kit::init);
+    for mode in [DiffMode::Split, DiffMode::Unified] {
+        for line_selection in [true, false] {
+            let (handle, viewer) = cx.update(|cx| {
+                gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {
+                    cx.new(|cx| ActionViewer {
+                        state: cx.new(|cx| DiffState::new(DiffFile::parse(
+                            "--- a/f.txt\n+++ b/f.txt\n@@ -1,2 +1,2 @@\n-old source text\n+new source text\n unchanged text\n"
+                        ).unwrap(), cx).with_mode(mode)),
+                        line_selection,
+                        clicks: Rc::new(Cell::new(0)),
+                    })
+                }).unwrap()
+            });
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                window.render_frame(cx);
+                let state = viewer.read(cx).state.clone();
+                window.click("review-toggle", cx);
+                assert_eq!(viewer.read(cx).clicks.get(), 1);
+                assert!(state.read(cx).selected_lines().is_none());
+                assert!(state.read(cx).selected_text(cx).is_empty());
+
+                window.within(("new", 0usize)).click(("line", 0usize), cx);
+                assert_eq!(state.read(cx).selected_lines().is_some(), line_selection);
+                state.update(cx, |state, cx| state.set_selected_lines(None, cx));
+                window.render_frame(cx);
+
+                let source = window.within(("new", 0usize)).find("source").bounds();
+                window.drag(
+                    point(source.left() + px(2.), source.center().y),
+                    point(source.left() + px(65.), source.center().y),
+                    cx,
+                );
+                assert!(
+                    !state.read(cx).selected_text(cx).is_empty(),
+                    "source text must remain selectable"
+                );
+                assert!(
+                    state.read(cx).selected_lines().is_none(),
+                    "text dragging must not select a whole line"
                 );
             })
             .unwrap();

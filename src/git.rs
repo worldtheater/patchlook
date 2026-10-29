@@ -1,5 +1,9 @@
-//! Read-only Git access. Arguments are passed directly to Git, never to a shell.
+//! Git access. Arguments are passed directly to Git, never to a shell.
+mod review;
+mod staging;
 use anyhow::{Context, Result, bail, ensure};
+pub use review::{ReviewPatch, merge_working_changes};
+pub use staging::{AccessMode, StageSelection, StagingPatch};
 use std::{
     collections::HashMap,
     io::{BufRead, BufReader},
@@ -17,6 +21,8 @@ pub struct Repository {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Area {
     Unstaged,
+    /// Combined list entry; Git status still returns the two concrete areas.
+    Partial,
     Staged,
     Untracked,
     Conflict,
@@ -362,7 +368,7 @@ impl Repository {
                 Area::Staged => {
                     cmd.arg("--cached");
                 }
-                Area::Conflict => {
+                Area::Conflict | Area::Partial => {
                     cmd.arg("HEAD");
                 }
                 Area::Untracked => {
@@ -494,6 +500,9 @@ impl Repository {
                 Some(parent) => self.tree_file(parent, old_path)?,
                 None => None,
             }
+        } else if change.area == Area::Partial && change.status == 'D' {
+            // A staged version was subsequently deleted from the worktree.
+            Some(self.index_file(&change.path)?)
         } else if change.area == Area::Unstaged {
             Some(self.index_file(old_path)?)
         } else {
@@ -711,10 +720,10 @@ mod tests {
     use std::fs;
     use tempfile::TempDir;
 
-    fn run(root: &Path, args: &[&str]) {
+    pub(super) fn run(root: &Path, args: &[&str]) {
         output(command(root).args(args), false).unwrap();
     }
-    fn fixture() -> (TempDir, Repository) {
+    pub(super) fn fixture() -> (TempDir, Repository) {
         let temp = tempfile::tempdir().unwrap();
         run(temp.path(), &["init", "-b", "main"]);
         run(temp.path(), &["config", "user.name", "Diff Test"]);
@@ -724,7 +733,7 @@ mod tests {
         let repo = Repository::open(temp.path()).unwrap();
         (temp, repo)
     }
-    fn commit(repo: &Repository, message: &str) {
+    pub(super) fn commit(repo: &Repository, message: &str) {
         run(&repo.root, &["add", "--all"]);
         run(&repo.root, &["commit", "-m", message]);
     }

@@ -6,7 +6,7 @@
 
 <p align="center">English · <a href="README.zh-CN.md">简体中文</a></p>
 
-<p align="center">A native, read-only Git viewer for macOS, Windows, and Linux.</p>
+<p align="center">A native Git viewer for macOS, Windows, and Linux. Read-only by default.</p>
 
 <p align="center">
   <a href="https://github.com/worldtheater/patchlook/releases">Releases</a> ·
@@ -14,13 +14,14 @@
   <a href="https://github.com/worldtheater/patchlook/issues">Report an issue</a>
 </p>
 
-Inspect local changes, explore commit history, and compare file versions without changing your working tree, staging area, or branches.
+Inspect local changes, explore commit history, and compare file versions. Patchlook starts in read-only mode; enable read/write mode when you want to stage changes.
 
 ![Patchlook reviewing its own commit history in light and dark themes](docs/images/patchlook-light-dark.webp)
 
 ## Features
 
 - **Review changes** — inspect staged, unstaged, and untracked files, with added and deleted line counts.
+- **Stage selectively** — in read/write mode, stage or unstage whole files and contiguous change blocks. Discard an unwanted block after confirmation.
 - **Explore history** — browse branches and commits, or search the full branch history by message or SHA prefix.
 - **Compare code** — switch between side-by-side and inline diffs, with syntax highlighting and changes highlighted within each line.
 - **Stay focused** — collapse unchanged sections, wrap long lines, or scroll both versions together.
@@ -49,6 +50,25 @@ Browse [Releases](https://github.com/worldtheater/patchlook/releases) for publis
 Refresh after making changes in another tool. Branch browsing uses local Git references; fetch updates with your usual Git client.
 
 Text diffs require UTF-8. Supported images are shown as previews; other binary files are listed without a content diff.
+
+### Stage changes
+
+Turn off the **Read-only** switch in the title bar, then open **Changes**. The indicator is green while read-only is on and orange when writing is enabled. Check a file to stage it, or use the outlined square button in the right-hand line-number gutter to stage a complete contiguous change block. Uncheck a staged file or block to unstage it. Each file appears once; partially staged files show their block progress. Staged blocks keep a softer diff background in place. If the index contains a third version of the same block, separate labelled comparisons show HEAD → Index and Index → Working tree.
+
+The tree separates tracked changes and untracked files into collapsible groups. Folder and group buttons include only their own descendants. Click an empty or partially checked folder to stage its remaining changes; click a fully checked folder to unstage its changes.
+
+These controls update the real Git index. Binary files, symlinks, submodule revisions, and metadata-only changes can be handled as whole files; unresolved conflicts must be resolved and staged with another Git tool. If a text file changes outside Patchlook, refresh before staging a block.
+
+In an unstaged diff, the `»` discard button in the left-hand gutter **discards the entire block** after confirmation, restoring its content from the staging area. Other changes and the index stay untouched. Discarding a new file’s block deletes that file. Staging and unstaging alone never change working-tree contents.
+
+Turning **Read-only** back on leaves staged changes intact. Each new application window starts read-only. To review and commit everything currently staged, use your terminal:
+
+```sh
+git diff --cached
+git commit -m "Your commit message"
+```
+
+Use ordinary `git commit` without `-a` or file arguments to commit exactly the staged content. Patchlook does not create commits, switch branches, or push changes.
 
 ## Keyboard shortcuts
 

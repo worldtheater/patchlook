@@ -5,6 +5,10 @@ pub const APP_ICON: &str = "app-icon/patchlook-v2.png";
 
 const ICONS: &[(&str, &[u8])] = &[
     (
+        "ui-icons/folder.svg",
+        include_bytes!("../assets/ui-icons/folder.svg"),
+    ),
+    (
         "file-icons/rust.svg",
         include_bytes!("../assets/file-icons/rust.svg"),
     ),

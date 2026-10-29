@@ -125,7 +125,7 @@ Check the existing submission before rerunning a failed release. An `Accepted` r
 
 Patchlook uses the [GPUI Kit fork](https://github.com/worldtheater/gpui-kit/tree/codex/diff-tool-patches), on the `codex/diff-tool-patches` branch. [Cargo.toml](../Cargo.toml) pins its Git revision through `[patch.crates-io]`; [Cargo.lock](../Cargo.lock) is checked in. Cargo fetches the source automatically, so normal builds need neither a submodule nor a sibling checkout.
 
-The patch series starts from the GPUI Kit 0.8.0 source commit `1676826d9d49b90f4d7b6808b69924f58796f6f1`. Its current tip is `a3080ee72d0a968cfbb07c5be6b10a6d0df687c7`.
+The patch series starts from the GPUI Kit 0.8.0 source commit `1676826d9d49b90f4d7b6808b69924f58796f6f1`. Its current tip is `0917a5564505fceacfbbf966d90c0c19a7af9820`.
 
 | Commit | Purpose |
 | --- | --- |
@@ -136,6 +136,12 @@ The patch series starts from the GPUI Kit 0.8.0 source commit `1676826d9d49b90f4
 | `9697b217` | Count contiguous changed blocks independently of folding and layout. |
 | `e2a084ae` | Localize diff controls in nine languages and rebuild when locale resources change. |
 | `a3080ee7` | Defer diff viewport measurement notifications until after drawing so the first layout finishes without further input. |
+| `1b0fa905` | Add an application-owned line-action slot with source coordinates and wrap-layout invalidation. |
+| `ff3fe330` | Add compact actions inside existing diff gutters, including empty sides of added/deleted rows, without shifting source text. |
+| `815e1fc8` | Refresh related patches while retaining visible source lines, wrapped-row offsets and horizontal scrolling. |
+| `2a43f3aa` | Let the application soften changed-line and inline-change backgrounds by source position without removing diff semantics. |
+| `9bc37a46` | Isolate gutter actions from line selection and let applications disable mouse selection through line numbers. |
+| `0917a556` | Add a smaller switch size and expose leading label placement while retaining standard switch behavior. |
 
 When updating GPUI Kit:
 
