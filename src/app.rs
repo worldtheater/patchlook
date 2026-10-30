@@ -3730,6 +3730,7 @@ mod tests {
         for layout in [Layout::Split, Layout::Inline] {
             let directory = tempfile::tempdir().unwrap();
             git(directory.path(), &["init", "-b", "main"]);
+            git(directory.path(), &["config", "core.autocrlf", "false"]);
             std::fs::write(directory.path().join("f.txt"), "a\nb\nc\nd\n").unwrap();
             git(directory.path(), &["add", "f.txt"]);
             git(directory.path(), &["commit", "-m", "base"]);
@@ -4075,7 +4076,12 @@ mod tests {
             );
             assert_eq!(window.find("stage-folder:src").checked(), Some(true));
             assert!(
-                window.find("stage-folder:src/deep").visible(),
+                window
+                    .find(format!(
+                        "stage-folder:{}",
+                        PathBuf::from("src").join("deep").display()
+                    ))
+                    .visible(),
                 "staging must not collapse the folder"
             );
             window.click("stage-folder:src", cx);
@@ -4278,6 +4284,7 @@ mod tests {
             ] {
                 let directory = tempfile::tempdir().unwrap();
                 git(directory.path(), &["init", "-b", "main"]);
+                git(directory.path(), &["config", "core.autocrlf", "false"]);
                 if let Some(text) = before {
                     std::fs::write(directory.path().join("f.txt"), text).unwrap();
                 }
