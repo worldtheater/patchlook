@@ -33,7 +33,7 @@ Quote repository paths that contain spaces. Use Release builds for UI and scroll
 ```sh
 cargo fmt --all -- --check
 cargo clippy --locked --all-targets -- -D warnings
-cargo test --locked
+cargo test --locked -- --test-threads=1
 python3 -m unittest discover -s scripts -p 'test_*.py'
 ```
 

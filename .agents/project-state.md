@@ -35,7 +35,6 @@
 - About、多语言、图标、MIT 与文件图标许可随包分发；中英文 README 有真实浅／暗色截图及暂存／恢复说明。
 
 ### In Progress
-- [active] 准备 v0.1.5 正式 Release 草稿：版本已更新，下一步推送标签，完成三平台构建及 macOS 签名／公证，核对资产和发布说明；保持 Draft，不公开发布。
 - [paused] 提交说明局部高亮及实时拖选：用户决定等待 Kit Base 上游支持。当前 SelectableText 缺局部高亮 API，拖选变化未触发重绘；列表高亮已完成。
 
 ### Next
@@ -49,8 +48,8 @@
 
 ## Verification
 - 当前 macOS 通过 fmt、Clippy、94 项串行 Rust 测试、Release 构建及 4 项 Python 打包测试。真实提交测试经生产 API及并排／行内按钮选择后执行普通 git commit，核对完整提交树／字节，覆盖部分选择、取消、原有暂存、第三版本、目录增删改名／二进制／特殊路径、CRLF／无末尾换行、丢弃与撤销重做、初始提交和意向添加。恢复测试覆盖权限、外部冲突、只读及历史栈边界。
-- 暂存刷新性能优化已完成本地验证，本地 Release 已更新，`dist/Patchlook.app` 已替换、重新 ad-hoc 签名并启动供用户验收；用户测试仓库未改动。52 文件／37 二进制（含未跟踪及部分暂存）样例中，写入后刷新约 80–90 ms、完整刷新约 870–920 ms，统计／进度结果一致；这是本机 macOS 对照，未代表 Windows 耗时。小样例单次操作 Git 调用由 32 降为 18。视觉效果由用户验收，本轮无原生 UI 自动操作。最新性能优化已通过三平台云端检查和打包，用户已确认 Windows 暂存响应明显改善；Kit 独立测试此前受未缓存依赖阻挡，消费方覆盖所用交互。
-- 开发构建 `c5f4424`（运行 `41075606168`）三平台检查、测试、Release 编译和打包通过；Windows 94 项 Rust 测试和 4 项 Python 打包测试通过。Windows x64 ZIP 已核对 artifact SHA256、压缩完整性、PE 架构和许可证；本地位于 `dist/windows-test-c5f4424/`，GitHub artifact `12987961156`。该包包含暂存刷新性能优化，沿用 0.1.4 元数据，不替换正式 Release。
+- 暂存刷新性能优化已完成验证；当前运行的 `dist/Patchlook.app` 仍为 0.1.4 开发预览，正式 0.1.5 校验包另存于 `dist/v0.1.5/`，未替换运行中的预览；用户测试仓库未改动。52 文件／37 二进制（含未跟踪及部分暂存）样例中，写入后刷新约 80–90 ms、完整刷新约 870–920 ms，统计／进度结果一致；这是本机 macOS 对照，未代表 Windows 耗时。小样例单次操作 Git 调用由 32 降为 18。视觉效果由用户验收，本轮无原生 UI 自动操作。最新性能优化已通过三平台云端检查和打包，用户已确认 Windows 暂存响应明显改善；Kit 独立测试此前受未缓存依赖阻挡，消费方覆盖所用交互。
+- v0.1.5（`0b5bdcc`，运行 `41080046456`）三平台串行测试、Release 编译、打包与草稿资产上传通过；macOS／Windows 各 94 项 Rust 测试、各平台 4 项 Python 打包测试。草稿已填写英文发布说明，含 macOS arm64 DMG／ZIP、Windows amd64 ZIP、Linux x86_64 tar.gz，未公开；地址 `https://github.com/worldtheater/patchlook/releases/tag/untagged-abec114b6274706a8309`。本地 `dist/v0.1.5/` 已核对四包摘要／结构；macOS 版本、Hardened Runtime、代码签名、app／DMG 公证票据及 Gatekeeper 均通过，Apple 提交 `b42616ce-7ade-4bce-b797-0a3032231608` 为 Accepted。
 - 最新正式版 v0.1.4（`c45ae39`）三平台 CI／打包通过并公开发布 Latest：macOS arm64 DMG／ZIP、Windows amd64 ZIP、Linux x86_64 tar.gz；macOS Developer ID、Hardened Runtime、公证、票据与 Gatekeeper 验证通过。v0.1.3 保持旧草稿。
 - 旧 Windows Git 的 hunk 溢出已模拟复现并验证修复；LF／CRLF、历史／工作区／索引均覆盖。Windows／Linux 菜单的动作、焦点和拖动隔离有回归。首次布局修复已由用户确认 macOS 正常；未量化帧耗时，跨平台视觉及分栏拖动后重启恢复仍属手工验收边界。
 
