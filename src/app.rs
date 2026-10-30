@@ -35,6 +35,7 @@ use patchlook::{
     preferences::{Appearance, Language, Layout, Preferences},
 };
 use std::{
+    collections::HashMap,
     ops::Range,
     path::PathBuf,
     rc::Rc,
@@ -185,37 +186,20 @@ impl PreparedChanges {
         commit: Option<&Commit>,
         preview_index: Option<usize>,
     ) -> anyhow::Result<Self> {
-        let raw_stats = repo.file_stats(&changes, commit)?;
         if commit.is_some() {
+            let stats = repo.file_stats(&changes, commit)?;
             let preview = preview_index
                 .and_then(|index| changes.get(index))
                 .map(|change| FileContent::load(repo, change, commit));
             return Ok(Self {
                 progress: vec![None; changes.len()],
                 changes,
-                stats: raw_stats,
+                stats,
                 preview,
                 preview_index: preview_index.unwrap_or(0),
             });
         }
-        let (merged, stats) = {
-            let merged = merge_working_changes(&changes);
-            let stats = merged
-                .iter()
-                .map(|file| {
-                    let mut total = DiffStats::default();
-                    for (_, stat) in changes
-                        .iter()
-                        .zip(&raw_stats)
-                        .filter(|(c, _)| c.path == file.path)
-                    {
-                        total += (*stat)?;
-                    }
-                    Some(total)
-                })
-                .collect();
-            (merged, stats)
-        };
+        let merged = merge_working_changes(&changes);
         let preview = preview_index
             .and_then(|index| merged.get(index))
             .map(|change| {
@@ -226,6 +210,12 @@ impl PreparedChanges {
                         .and_then(FileContent::from_review)
                 }
             });
+        let mut counts = HashMap::new();
+        if let Some(Ok(FileContent::Text(_, Some(review)))) = &preview
+            && let Some(stats) = review.text_stats()
+        {
+            counts.insert(merged[preview_index.unwrap()].path.clone(), Some(stats));
+        }
         let progress = merged
             .iter()
             .enumerate()
@@ -236,13 +226,32 @@ impl PreparedChanges {
                     {
                         return Ok(Some(review.progress()));
                     }
-                    repo.review_patch_from_changes(change, &changes)
-                        .map(|review| Some(review.progress()))
+                    let review = repo.review_patch_from_changes(change, &changes)?;
+                    if let Some(stats) = review.text_stats() {
+                        counts.insert(change.path.clone(), Some(stats));
+                    }
+                    Ok(Some(review.progress()))
                 } else {
                     Ok(None)
                 }
             })
             .collect::<anyhow::Result<Vec<_>>>()?;
+        // Preview/progress already read these text diffs. Only ask Git for line
+        // counts of the remaining paths, preserving binary and metadata handling.
+        let remaining = changes
+            .into_iter()
+            .filter(|change| !counts.contains_key(&change.path))
+            .collect::<Vec<_>>();
+        for (change, stats) in remaining.iter().zip(repo.file_stats(&remaining, None)?) {
+            let total = counts
+                .entry(change.path.clone())
+                .or_insert(Some(DiffStats::default()));
+            *total = total.zip(stats).map(|(mut total, stats)| {
+                total += stats;
+                total
+            });
+        }
+        let stats = merged.iter().map(|change| counts[&change.path]).collect();
         Ok(Self {
             changes: merged,
             stats,
@@ -3599,6 +3608,11 @@ mod tests {
             );
             assert_eq!(prepared.changes, complete.changes);
             assert_eq!(prepared.stats, complete.stats);
+            assert_eq!(
+                prepared.stats.iter().flatten().copied().sum::<DiffStats>(),
+                repo.change_stats(&repo.working_changes().unwrap(), None)
+                    .unwrap()
+            );
             assert_eq!(prepared.progress, complete.progress);
             assert_eq!(prepared.preview_index, target);
             assert_eq!(
@@ -3606,6 +3620,59 @@ mod tests {
                 Some((if undo { 1 } else { 2 }, 3))
             );
             assert!(prepared.preview.as_ref().unwrap().is_ok());
+        }
+    }
+
+    #[test]
+    fn reused_review_counts_match_git_for_text_and_nontext_changes() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        git(root, &["init", "-b", "main"]);
+        git(root, &["config", "core.autocrlf", "false"]);
+        for (name, contents) in [
+            ("third.txt", "old\ncontext\nend"),
+            ("deleted.txt", "deleted\n"),
+            ("renamed.txt", "rename only\n"),
+            ("binary.bin", "\0old"),
+        ] {
+            std::fs::write(root.join(name), contents).unwrap();
+        }
+        git(root, &["add", "-A"]);
+        git(root, &["commit", "-m", "base"]);
+        std::fs::write(root.join("third.txt"), "index\ncontext\nend").unwrap();
+        git(root, &["add", "third.txt"]);
+        git(root, &["mv", "renamed.txt", "renamed [new].txt"]);
+        std::fs::remove_file(root.join("deleted.txt")).unwrap();
+        for (name, contents) in [
+            ("third.txt", "worktree\ncontext\nEND"),
+            ("binary.bin", "\0new"),
+            ("new.txt", "+++ header-like text\r\n--- still text"),
+            ("empty.txt", ""),
+        ] {
+            std::fs::write(root.join(name), contents).unwrap();
+        }
+        let repo = Repository::open(root).unwrap();
+        let raw = repo.working_changes().unwrap();
+        let merged = merge_working_changes(&raw);
+        let raw_stats = repo.file_stats(&raw, None).unwrap();
+        let expected: Vec<_> = merged
+            .iter()
+            .map(|file| {
+                let mut total = DiffStats::default();
+                for (change, stats) in raw.iter().zip(&raw_stats) {
+                    if change.path == file.path {
+                        total += (*stats)?;
+                    }
+                }
+                Some(total)
+            })
+            .collect();
+        for preview in std::iter::once(None).chain((0..merged.len()).map(Some)) {
+            let prepared = PreparedChanges::load(&repo, raw.clone(), None, preview).unwrap();
+            assert_eq!(prepared.stats, expected, "preview {preview:?}");
+            if let Some(preview) = prepared.preview {
+                assert!(preview.is_ok());
+            }
         }
     }
 
@@ -4560,9 +4627,7 @@ mod tests {
             gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
                 cx.new(|cx| {
                     let mut app = test_app(window, cx);
-                    app.repository = Some(Repository {
-                        root: directory.path().into(),
-                    });
+                    app.repository = Some(Repository::open(directory.path()).unwrap());
                     app.working.loaded = true;
                     app.working.changes = names
                         .into_iter()
@@ -5532,7 +5597,7 @@ mod tests {
             gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
                 cx.new(|cx| {
                     let mut app = test_app(window, cx);
-                    app.repository = Some(Repository { root });
+                    app.repository = Some(Repository::open(&root).unwrap());
                     app.working.loaded = true;
                     app.working.changes = ["current.rs", "next.rs"]
                         .map(|path| Change {

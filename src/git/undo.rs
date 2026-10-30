@@ -56,9 +56,22 @@ impl Snapshot {
                 .args(scope.paths()),
             false,
         )?;
-        // Intent-to-add entries have an empty-blob ID, but must not be committed
-        // as ordinary empty files. Compare Git's two documented index views to
-        // retain this flag without parsing the index format or debug output.
+        // Only empty-blob entries can be intent-to-add. For those candidates,
+        // compare Git's two index views to distinguish the flag from a real
+        // empty file. Ordinary nonempty entries need no extra Git reads.
+        let candidates = index
+            .split(|byte| *byte == 0)
+            .filter(|entry| {
+                entry.split(|byte| *byte == b' ').nth(1) == Some(repo.empty_blob.as_slice())
+            })
+            .map(|entry| {
+                let tab = entry
+                    .iter()
+                    .position(|byte| *byte == b'\t')
+                    .context("Invalid index entry")?;
+                path(&entry[tab + 1..])
+            })
+            .collect::<Result<Vec<_>>>()?;
         let added = |visibility| -> Result<BTreeSet<PathBuf>> {
             output(
                 command(&repo.root)
@@ -72,7 +85,7 @@ impl Snapshot {
                         visibility,
                         "--",
                     ])
-                    .args(scope.paths()),
+                    .args(&candidates),
                 false,
             )?
             .split(|byte| *byte == 0)
@@ -80,7 +93,7 @@ impl Snapshot {
             .map(path)
             .collect()
         };
-        let intent_to_add = if index.is_empty() {
+        let intent_to_add = if candidates.is_empty() {
             BTreeSet::new()
         } else {
             added("--ita-visible-in-index")?

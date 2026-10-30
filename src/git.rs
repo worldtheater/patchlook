@@ -18,6 +18,8 @@ pub const HISTORY_PAGE_SIZE: usize = 100;
 #[derive(Clone, Debug)]
 pub struct Repository {
     pub root: PathBuf,
+    // Immutable for this repository's object format (SHA-1 or SHA-256).
+    empty_blob: Vec<u8>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -166,7 +168,15 @@ impl Repository {
             false,
         )?;
         let root = path(bytes.strip_suffix(b"\n").unwrap_or(&bytes))?;
-        Ok(Self { root })
+        let empty_blob = output(
+            command(&root)
+                .args(["hash-object", "--stdin"])
+                .stdin(Stdio::null()),
+            false,
+        )?
+        .trim_ascii_end()
+        .to_vec();
+        Ok(Self { root, empty_blob })
     }
 
     fn has_head(&self) -> Result<bool> {

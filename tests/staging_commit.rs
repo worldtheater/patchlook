@@ -26,9 +26,21 @@ fn git(root: &Path, args: &[&str]) -> Vec<u8> {
 
 impl Fixture {
     fn new() -> Self {
+        Self::with_object_format("sha1")
+    }
+
+    fn with_object_format(object_format: &str) -> Self {
         let directory = tempfile::tempdir().unwrap();
         let root = directory.path();
-        git(root, &["init", "-b", "main"]);
+        git(
+            root,
+            &[
+                "init",
+                "-b",
+                "main",
+                &format!("--object-format={object_format}"),
+            ],
+        );
         for (key, value) in [
             ("user.name", "Staging Commit Test"),
             ("user.email", "staging@example.test"),
@@ -293,51 +305,57 @@ fn partial_commits_respect_crlf_conversion_and_missing_final_newline() {
 
 #[test]
 fn undo_staging_an_intent_to_add_file_does_not_commit_an_empty_file() {
-    for initial_commit in [false, true] {
-        for contents in ["not selected after undo", ""] {
-            let f = Fixture::new();
-            if initial_commit {
-                f.seed(&[("keep.txt", b"base")]);
+    for object_format in ["sha1", "sha256"] {
+        for initial_commit in [false, true] {
+            for contents in ["not selected after undo", ""] {
+                let f = Fixture::with_object_format(object_format);
+                if initial_commit {
+                    f.seed(&[("keep.txt", b"base")]);
+                }
+                // A real empty file must remain staged when the same snapshot also
+                // contains an intent-to-add entry with an identical blob ID.
+                f.write("empty.txt", "");
+                git(&f.repo.root, &["add", "empty.txt"]);
+                f.write("new.txt", contents);
+                git(&f.repo.root, &["add", "-N", "--chmod=+x", "new.txt"]);
+                let before = git(&f.repo.root, &["status", "--porcelain=v1", "-z"]);
+                let before_index = git(&f.repo.root, &["ls-files", "--stage", "-z"]);
+                let changes = [f.change("new.txt"), f.change("empty.txt")];
+                let mut history = WriteHistory::default();
+                history
+                    .record(
+                        &f.repo,
+                        AccessMode::ReadWrite,
+                        WriteScope::index(&changes),
+                        || {
+                            f.repo
+                                .set_files_staged(AccessMode::ReadWrite, &changes, true)
+                        },
+                    )
+                    .unwrap();
+                history.undo(&f.repo, AccessMode::ReadWrite).unwrap();
+                assert_eq!(
+                    git(&f.repo.root, &["status", "--porcelain=v1", "-z"]),
+                    before
+                );
+                assert_eq!(
+                    git(&f.repo.root, &["ls-files", "--stage", "-z"]),
+                    before_index
+                );
+                history.redo(&f.repo, AccessMode::ReadWrite).unwrap();
+                let staged = git(&f.repo.root, &["ls-files", "--stage", "-z"]);
+                fs::remove_file(f.repo.root.join("new.txt")).unwrap();
+                assert!(history.undo(&f.repo, AccessMode::ReadWrite).is_err());
+                assert_eq!(git(&f.repo.root, &["ls-files", "--stage", "-z"]), staged);
+                f.write("new.txt", contents);
+                history.undo(&f.repo, AccessMode::ReadWrite).unwrap();
+                f.write("keep.txt", "selected");
+                f.repo
+                    .set_files_staged(AccessMode::ReadWrite, &[f.change("keep.txt")], true)
+                    .unwrap();
+                f.commit_exact(&[("keep.txt", b"selected"), ("empty.txt", b"")]);
+                assert_eq!(f.read("new.txt"), contents.as_bytes());
             }
-            f.write("new.txt", contents);
-            git(&f.repo.root, &["add", "-N", "--chmod=+x", "new.txt"]);
-            let before = git(&f.repo.root, &["status", "--porcelain=v1", "-z"]);
-            let before_index = git(&f.repo.root, &["ls-files", "--stage", "-z"]);
-            let change = f.change("new.txt");
-            let mut history = WriteHistory::default();
-            history
-                .record(
-                    &f.repo,
-                    AccessMode::ReadWrite,
-                    WriteScope::index(std::slice::from_ref(&change)),
-                    || {
-                        f.repo
-                            .set_files_staged(AccessMode::ReadWrite, &[change], true)
-                    },
-                )
-                .unwrap();
-            history.undo(&f.repo, AccessMode::ReadWrite).unwrap();
-            assert_eq!(
-                git(&f.repo.root, &["status", "--porcelain=v1", "-z"]),
-                before
-            );
-            assert_eq!(
-                git(&f.repo.root, &["ls-files", "--stage", "-z"]),
-                before_index
-            );
-            history.redo(&f.repo, AccessMode::ReadWrite).unwrap();
-            let staged = git(&f.repo.root, &["ls-files", "--stage", "-z"]);
-            fs::remove_file(f.repo.root.join("new.txt")).unwrap();
-            assert!(history.undo(&f.repo, AccessMode::ReadWrite).is_err());
-            assert_eq!(git(&f.repo.root, &["ls-files", "--stage", "-z"]), staged);
-            f.write("new.txt", contents);
-            history.undo(&f.repo, AccessMode::ReadWrite).unwrap();
-            f.write("keep.txt", "selected");
-            f.repo
-                .set_files_staged(AccessMode::ReadWrite, &[f.change("keep.txt")], true)
-                .unwrap();
-            f.commit_exact(&[("keep.txt", b"selected")]);
-            assert_eq!(f.read("new.txt"), contents.as_bytes());
         }
     }
 }

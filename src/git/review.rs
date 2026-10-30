@@ -254,6 +254,21 @@ impl ReviewPatch {
     pub fn patches(&self) -> impl Iterator<Item = &str> {
         self.parts.iter().map(|part| part.raw.as_str())
     }
+    /// Count the underlying index/worktree changes, including third versions,
+    /// from the text already parsed for review. Other file types still use numstat.
+    pub fn text_stats(&self) -> Option<DiffStats> {
+        let mut stats = DiffStats::default();
+        for version in &self.versions {
+            for line in &version.text.as_ref()?.lines {
+                match line.kind {
+                    b'+' => stats.additions += 1,
+                    b'-' => stats.deletions += 1,
+                    _ => {}
+                }
+            }
+        }
+        Some(stats)
+    }
     pub fn separate_versions(&self) -> bool {
         self.parts.len() > 1
     }
@@ -383,9 +398,15 @@ mod tests {
     use crate::git::tests::{commit, fixture, run};
 
     fn review(repo: &Repository) -> ReviewPatch {
-        let changes = merge_working_changes(&repo.snapshot().unwrap().changes);
+        let raw_changes = repo.working_changes().unwrap();
+        let changes = merge_working_changes(&raw_changes);
         assert_eq!(changes.len(), 1);
-        repo.review_patch(&changes[0]).unwrap()
+        let review = repo.review_patch(&changes[0]).unwrap();
+        assert_eq!(
+            review.text_stats(),
+            Some(repo.change_stats(&raw_changes, None).unwrap())
+        );
+        review
     }
 
     #[test]
