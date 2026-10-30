@@ -35,8 +35,6 @@
     "warning.background": "#cfad68",
     "selection.background": "#3d536b",
     "ring": "#747474",
-    "switch.background": "#505050",
-    "switch.thumb.background": "#ffffff",
     "scrollbar.thumb.background": "#5b5b5b",
     "scrollbar.thumb.hover.background": "#767676",
     "window.border": "#414141"

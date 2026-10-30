@@ -107,14 +107,13 @@
   "viewed_branch_tooltip": "Angezeigter Branch: {branch}\nArbeitsverzeichnis-Branch: {worktree}",
   "read_only_mode": "Nur lesen",
   "read_write_mode": "Lesen/Schreiben",
-  "access_mode_help": "Wenn „Nur lesen“ aktiviert ist, kannst du Änderungen weder vormerken noch aus der Staging-Area entfernen oder verwerfen.",
   "stage_file": "Datei vormerken",
   "unstage_file": "Datei aus Vormerkung entfernen",
   "stage_block": "Block vormerken",
   "unstage_block": "Block aus Vormerkung entfernen",
   "discard_block": "Änderungsblock verwerfen",
   "discard_block_title": "Diesen Änderungsblock verwerfen?",
-  "discard_block_description": "Stellt den Inhalt aus dem Index wieder her. Andere Änderungen und der Index bleiben erhalten. Eine neue Datei wird gelöscht. Dies kann nicht rückgängig gemacht werden.",
+  "discard_block_description": "Stellt den Inhalt aus dem Index wieder her. Andere Änderungen und der Index bleiben erhalten. Eine neue Datei wird gelöscht. Du kannst dies rückgängig machen, bis du das Repository wechselst oder das Fenster schließt.",
   "keep_changes": "Änderungen behalten",
   "write_failed": "Änderungen konnten nicht aktualisiert werden",
   "write_refresh_failed": "Änderungen gespeichert, aber Aktualisierung fehlgeschlagen. Repository neu laden",
@@ -127,5 +126,6 @@
   "staging_progress": "Vorgemerkt {staged}/{total}",
   "review_index": "Vorgemerkte Änderungen · HEAD → Index",
   "review_worktree": "Nicht vorgemerkte Änderungen · Index → Arbeitsverzeichnis",
-  "read_only": "Nur lesen"
+  "undo_write": "Letztes Vormerken oder Verwerfen rückgängig machen",
+  "redo_write": "Letztes Vormerken oder Verwerfen wiederholen"
 }

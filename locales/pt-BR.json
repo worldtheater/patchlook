@@ -107,14 +107,13 @@
   "viewed_branch_tooltip": "Branch em visualização: {branch}\nBranch de trabalho: {worktree}",
   "read_only_mode": "Somente leitura",
   "read_write_mode": "Leitura/escrita",
-  "access_mode_help": "Quando somente leitura está ativado, você não pode preparar alterações, removê-las da área de preparação ou descartá-las.",
   "stage_file": "Preparar arquivo",
   "unstage_file": "Retirar arquivo da preparação",
   "stage_block": "Preparar bloco",
   "unstage_block": "Retirar bloco da preparação",
   "discard_block": "Descartar bloco",
   "discard_block_title": "Descartar este bloco?",
-  "discard_block_description": "Restaura o conteúdo da área de preparação. As outras alterações e o conteúdo preparado são mantidos. Um arquivo novo será excluído. Esta ação não pode ser desfeita.",
+  "discard_block_description": "Restaura o conteúdo da área de preparação. As outras alterações e o conteúdo preparado são mantidos. Um arquivo novo será excluído. Você pode desfazer esta operação antes de trocar de repositório ou fechar a janela.",
   "keep_changes": "Manter alterações",
   "write_failed": "Não foi possível atualizar as alterações",
   "write_refresh_failed": "Alterações salvas, mas a atualização falhou. Atualize o repositório",
@@ -127,5 +126,6 @@
   "staging_progress": "Preparado {staged}/{total}",
   "review_index": "Alterações preparadas · HEAD → Índice",
   "review_worktree": "Alterações não preparadas · Índice → Árvore de trabalho",
-  "read_only": "Somente leitura"
+  "undo_write": "Desfazer a última operação de preparação ou descarte",
+  "redo_write": "Refazer a última operação de preparação ou descarte"
 }

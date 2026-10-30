@@ -20,7 +20,6 @@ use gpui_kit::{
         menu::{DropdownMenu, PopupMenuItem},
         resizable::{h_resizable, resizable_panel, v_resizable},
         scroll::{Scrollbar, ScrollbarMode},
-        switch::Switch,
         tooltip::Tooltip,
         v_flex,
     },
@@ -31,7 +30,7 @@ use patchlook::{
     external_open::{ApplicationIcon, FileToOpen, OpenWith, applications_for},
     git::{
         AccessMode, Area, Branch, Change, Commit, DiffStats, Repository, ReviewPatch,
-        StageSelection, merge_working_changes,
+        StageSelection, WriteHistory, WriteScope, merge_working_changes,
     },
     preferences::{Appearance, Language, Layout, Preferences},
 };
@@ -277,6 +276,7 @@ enum HistoryRequest {
 pub struct Patchlook {
     access_mode: AccessMode,
     write_task: Option<Task<()>>,
+    write_history: WriteHistory,
     preferences: Preferences,
     about: Entity<crate::about::AboutPanel>,
     external_files: Vec<tempfile::TempDir>,
@@ -342,6 +342,7 @@ impl Patchlook {
         let mut app = Self {
             access_mode: AccessMode::default(),
             write_task: None,
+            write_history: WriteHistory::default(),
             working: ChangeState::new(preferences.layout, cx),
             history: HistoryState::new(preferences.layout, cx),
             preferences,
@@ -424,26 +425,33 @@ impl Patchlook {
         } else {
             self.staging_anchor_side()
         };
+        let scope = if matches!(operation, ChangeOperation::DiscardBlock(_)) {
+            WriteScope::Worktree(change.path.clone())
+        } else {
+            WriteScope::index(std::slice::from_ref(&change))
+        };
         self.write_repository(
             side,
-            move |repo, mode| match operation {
-                ChangeOperation::Stage(selection) => match selection {
-                    StageSelection::File => repo.set_staged(mode, &change, selection, None),
-                    StageSelection::Block(block) => repo.set_review_block(
+            move |repo, mode, history| {
+                history.record(repo, mode, scope, || match operation {
+                    ChangeOperation::Stage(selection) => match selection {
+                        StageSelection::File => repo.set_staged(mode, &change, selection, None),
+                        StageSelection::Block(block) => repo.set_review_block(
+                            mode,
+                            patch
+                                .as_deref()
+                                .ok_or_else(|| anyhow::anyhow!("No text patch available"))?,
+                            block,
+                        ),
+                    },
+                    ChangeOperation::DiscardBlock(block) => repo.discard_review_block(
                         mode,
                         patch
                             .as_deref()
                             .ok_or_else(|| anyhow::anyhow!("No text patch available"))?,
                         block,
                     ),
-                },
-                ChangeOperation::DiscardBlock(block) => repo.discard_review_block(
-                    mode,
-                    patch
-                        .as_deref()
-                        .ok_or_else(|| anyhow::anyhow!("No text patch available"))?,
-                    block,
-                ),
+                })
             },
             cx,
         );
@@ -456,7 +464,9 @@ impl Patchlook {
     fn write_repository(
         &mut self,
         stable_side: DiffSide,
-        write: impl FnOnce(&Repository, AccessMode) -> anyhow::Result<()> + Send + 'static,
+        write: impl FnOnce(&Repository, AccessMode, &mut WriteHistory) -> anyhow::Result<()>
+        + Send
+        + 'static,
         cx: &mut Context<Self>,
     ) {
         if !self.staging_visible() || self.staging_disabled() {
@@ -466,6 +476,7 @@ impl Patchlook {
             return;
         };
         let mode = self.access_mode;
+        let mut history = self.write_history.clone();
         let selected = self
             .working
             .selected_file
@@ -475,30 +486,32 @@ impl Patchlook {
         self.working.files_loading = true;
         self.working.error = None;
         self.write_task = Some(cx.spawn(async move |this, cx| {
-            let result: anyhow::Result<anyhow::Result<PreparedChanges>> = cx
+            let (history, result) = cx
                 .background_spawn(async move {
-                    write(&repo, mode)?;
-                    Ok((|| {
-                        let changes = repo.snapshot()?.changes;
-                        let merged = merge_working_changes(&changes);
-                        let preview_index = selected
-                            .as_ref()
-                            .and_then(|selected| {
-                                merged.iter().position(|c| c.path == selected.path)
-                            })
-                            .unwrap_or(0);
-                        let mut prepared = PreparedChanges::load(&repo, changes, None, false)?;
-                        prepared.preview_index = preview_index;
-                        prepared.preview = prepared
-                            .changes
-                            .get(preview_index)
-                            .map(|change| FileContent::load(&repo, change, None));
-                        Ok(prepared)
-                    })())
+                    let result: anyhow::Result<anyhow::Result<PreparedChanges>> =
+                        write(&repo, mode, &mut history).map(|()| {
+                            let changes = repo.snapshot()?.changes;
+                            let merged = merge_working_changes(&changes);
+                            let preview_index = selected
+                                .as_ref()
+                                .and_then(|selected| {
+                                    merged.iter().position(|c| c.path == selected.path)
+                                })
+                                .unwrap_or(0);
+                            let mut prepared = PreparedChanges::load(&repo, changes, None, false)?;
+                            prepared.preview_index = preview_index;
+                            prepared.preview = prepared
+                                .changes
+                                .get(preview_index)
+                                .map(|change| FileContent::load(&repo, change, None));
+                            Ok(prepared)
+                        });
+                    (history, result)
                 })
                 .await;
             let _ = this.update(cx, |this, cx| {
                 this.write_task = None;
+                this.write_history = history;
                 this.working.files_loading = false;
                 match result {
                     Ok(Ok(prepared)) => {
@@ -524,6 +537,20 @@ impl Patchlook {
             });
         }));
         cx.notify();
+    }
+
+    fn restore_write(&mut self, undo: bool, cx: &mut Context<Self>) {
+        self.write_repository(
+            DiffSide::Original,
+            move |repo, mode, history| {
+                if undo {
+                    history.undo(repo, mode)
+                } else {
+                    history.redo(repo, mode)
+                }
+            },
+            cx,
+        );
     }
 
     fn staging_button(
@@ -632,7 +659,11 @@ impl Patchlook {
                 let changes = changes.clone();
                 this.write_repository(
                     this.staging_anchor_side(),
-                    move |repo, mode| repo.set_files_staged(mode, &changes, !all_staged),
+                    move |repo, mode, history| {
+                        history.record(repo, mode, WriteScope::index(&changes), || {
+                            repo.set_files_staged(mode, &changes, !all_staged)
+                        })
+                    },
                     cx,
                 );
             }))
@@ -905,6 +936,9 @@ impl Patchlook {
                 this.loading = false;
                 match result {
                     Ok((repo, branch, branches, page, prepared)) => {
+                        if this.repository.as_ref().map(|old| &old.root) != Some(&repo.root) {
+                            this.write_history = WriteHistory::default();
+                        }
                         this.working = ChangeState::new(this.preferences.layout, cx);
                         let query = std::mem::take(&mut this.history.query);
                         this.history = HistoryState::new(this.preferences.layout, cx);
@@ -964,6 +998,7 @@ impl Patchlook {
 
         self.load_task = None;
         self.repository = None;
+        self.write_history = WriteHistory::default();
         self.branch.clear();
         self.branches.clear();
         self.branch_scroll = UniformListScrollHandle::new();
@@ -1650,12 +1685,17 @@ fn list_scrollbar(id: &'static str, handle: &UniformListScrollHandle) -> Div {
 }
 
 impl Patchlook {
-    fn access_mode_switch(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn access_mode_control(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let read_only = self.access_mode == AccessMode::ReadOnly;
         let busy = self.write_task.is_some();
+        let mode_label = if read_only {
+            "read_only_mode"
+        } else {
+            "read_write_mode"
+        };
         h_flex()
-            .gap_2()
-            .px_1()
+            .gap_1()
+            .pl_1()
             .child(
                 div()
                     .id("access-mode-indicator")
@@ -1669,36 +1709,34 @@ impl Patchlook {
                         gpui_kit::component::orange_500()
                     })
                     .role(accesskit::Role::Label)
-                    .aria_label(tr(if read_only {
-                        "read_only_mode"
-                    } else {
-                        "read_write_mode"
-                    })),
+                    .aria_label(tr(mode_label)),
             )
             .child(
-                Switch::new("access-mode")
-                    .xsmall()
-                    .py_1()
-                    .label(tr("read_only"))
-                    .label_side(gpui_kit::component::Side::Left)
-                    .checked(read_only)
-                    .color(cx.theme().muted_foreground.opacity(0.8))
-                    .focus_ring(false)
-                    .tooltip(tr("access_mode_help"))
-                    .tab_stop(!busy)
-                    // Keep the controlled value and appearance during a short write lock.
-                    .when(!busy, |switch| {
-                        switch.on_change(cx.listener(|this, read_only: &bool, _, cx| {
-                            this.set_access_mode(
-                                if *read_only {
-                                    AccessMode::ReadOnly
-                                } else {
-                                    AccessMode::ReadWrite
-                                },
-                                cx,
-                            );
-                        }))
-                    }),
+                icon_button(
+                    "access-mode",
+                    if read_only {
+                        IconName::Lock
+                    } else {
+                        IconName::LockOpen
+                    },
+                    mode_label,
+                )
+                .toggled(read_only)
+                .disabled(busy)
+                // A short write lock blocks activation without dimming the control.
+                .text_color(cx.theme().foreground)
+                .focus_ring(false)
+                .tab_stop(!busy)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.set_access_mode(
+                        if read_only {
+                            AccessMode::ReadWrite
+                        } else {
+                            AccessMode::ReadOnly
+                        },
+                        cx,
+                    );
+                })),
             )
     }
 
@@ -1971,8 +2009,12 @@ impl Patchlook {
                         ),
                 )
                 .child(div().flex_1())
-                .child(div().occlude().child(self.access_mode_switch(cx)))
-                .child(div().occlude().child(self.language_menu(cx)))
+                .child(
+                    h_flex()
+                        .gap_1()
+                        .child(div().occlude().child(self.access_mode_control(cx)))
+                        .child(div().occlude().child(self.language_menu(cx))),
+                )
                 .child({
                     let (icon, current) = appearance_label(self.preferences.appearance);
                     let (_, next) = appearance_label(self.preferences.appearance.next());
@@ -2357,8 +2399,29 @@ impl Patchlook {
                     .min_w_0()
                     .text_sm()
                     .truncate()
+                    // Align the visible glyphs with the centered toolbar icon silhouettes.
+                    .relative()
+                    .top(px(-1.))
                     .child(title.unwrap_or_default()),
             )
+            .when(self.staging_visible(), |row| {
+                row.child(
+                    icon_button("undo-write", IconName::Undo2, "undo_write")
+                        .when(self.write_history.can_undo(), |button| {
+                            button.text_color(cx.theme().muted_foreground)
+                        })
+                        .disabled(self.staging_disabled() || !self.write_history.can_undo())
+                        .on_click(cx.listener(|this, _, _, cx| this.restore_write(true, cx))),
+                )
+                .child(
+                    icon_button("redo-write", IconName::Redo2, "redo_write")
+                        .when(self.write_history.can_redo(), |button| {
+                            button.text_color(cx.theme().muted_foreground)
+                        })
+                        .disabled(self.staging_disabled() || !self.write_history.can_redo())
+                        .on_click(cx.listener(|this, _, _, cx| this.restore_write(false, cx))),
+                )
+            })
             .when_some(file, |row, file| {
                 row.child(
                     h_flex()
@@ -3434,6 +3497,7 @@ mod tests {
         Patchlook {
             access_mode: AccessMode::default(),
             write_task: None,
+            write_history: WriteHistory::default(),
             working: ChangeState::new(Layout::Split, cx),
             history: HistoryState::new(Layout::Split, cx),
             preferences: Preferences::default(),
@@ -3459,6 +3523,202 @@ mod tests {
             _subscriptions: vec![],
             focus: cx.focus_handle(),
         }
+    }
+
+    #[gpui_kit::test]
+    fn staged_gutter_selections_produce_the_expected_git_commit(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            cx.set_reduce_motion(true);
+        });
+        for layout in [Layout::Split, Layout::Inline] {
+            let directory = tempfile::tempdir().unwrap();
+            let root = directory.path();
+            git(root, &["init", "-b", "main"]);
+            git(root, &["config", "core.autocrlf", "false"]);
+            git(root, &["config", "core.hooksPath", ".git/no-hooks"]);
+            std::fs::write(root.join("f.txt"), "one\nkeep\ntwo\nkeep\nthree\n").unwrap();
+            std::fs::write(root.join("ready.txt"), "base\n").unwrap();
+            git(root, &["add", "--all"]);
+            git(root, &["commit", "-m", "base"]);
+            let working = "ONE\nkeep\nTWO\nkeep\nTHREE\n";
+            std::fs::write(root.join("f.txt"), working).unwrap();
+            std::fs::write(root.join("ready.txt"), "already staged\n").unwrap();
+            git(root, &["add", "ready.txt"]);
+            std::fs::write(root.join("leave.txt"), "untracked\n").unwrap();
+            let (handle, app) = cx.update(|cx| {
+                gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                    cx.new(|cx| {
+                        let mut app = test_app(window, cx);
+                        app.preferences.layout = layout;
+                        app.load(root.to_owned(), cx);
+                        app
+                    })
+                })
+                .unwrap()
+            });
+            cx.run_until_parked();
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                window.render_frame(cx);
+                window.click("access-mode", cx);
+            })
+            .unwrap();
+            cx.run_until_parked();
+            for block in [0usize, 2, 0] {
+                cx.update_window(handle, |_, window, cx| {
+                    window.render_frame(cx);
+                    window.render_frame(cx);
+                    window.click(("stage-block", block), cx);
+                })
+                .unwrap();
+                cx.run_until_parked();
+                cx.update(|cx| {
+                    assert!(
+                        app.read(cx).working.error.is_none(),
+                        "{:?}",
+                        app.read(cx).working.error
+                    )
+                });
+            }
+            // Commit the exact index generated by real button clicks, without `add` or `-a`.
+            git(root, &["commit", "-m", "selected in the UI"]);
+            for (path, expected) in [
+                ("f.txt", "one\nkeep\ntwo\nkeep\nTHREE\n"),
+                ("ready.txt", "already staged\n"),
+            ] {
+                let result = std::process::Command::new("git")
+                    .arg("-C")
+                    .arg(root)
+                    .args(["show", &format!("HEAD:{path}")])
+                    .output()
+                    .unwrap();
+                assert!(result.status.success());
+                assert_eq!(result.stdout, expected.as_bytes());
+            }
+            let paths = std::process::Command::new("git")
+                .arg("-C")
+                .arg(root)
+                .args(["ls-tree", "-r", "--name-only", "HEAD"])
+                .output()
+                .unwrap();
+            assert_eq!(paths.stdout, b"f.txt\nready.txt\n");
+            assert_eq!(
+                std::fs::read(root.join("f.txt")).unwrap(),
+                working.as_bytes()
+            );
+            let remaining = Repository::open(root).unwrap().snapshot().unwrap().changes;
+            assert!(
+                remaining
+                    .iter()
+                    .any(|c| c.path == std::path::Path::new("f.txt") && c.area == Area::Unstaged)
+            );
+            assert!(
+                remaining
+                    .iter()
+                    .any(|c| c.path == std::path::Path::new("leave.txt")
+                        && c.area == Area::Untracked)
+            );
+        }
+    }
+
+    #[gpui_kit::test]
+    fn undo_redo_restores_discarded_files_and_staging_through_the_toolbar(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            cx.set_reduce_motion(true);
+        });
+        let directory = tempfile::tempdir().unwrap();
+        git(directory.path(), &["init", "-b", "main"]);
+        std::fs::write(directory.path().join("new.txt"), "recover this content\n").unwrap();
+        let (handle, app) = cx.update(|cx| {
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                cx.new(|cx| {
+                    let mut app = test_app(window, cx);
+                    app.access_mode = AccessMode::ReadWrite;
+                    app.load(directory.path().to_owned(), cx);
+                    app
+                })
+            })
+            .unwrap()
+        });
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.render_frame(cx);
+            assert_eq!(window.find("undo-write").disabled(), Some(true));
+            window.click(("discard-block", 0usize), cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click("ok", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        assert!(!directory.path().join("new.txt").exists());
+        for (button, exists) in [
+            ("undo-write", true),
+            ("redo-write", false),
+            ("undo-write", true),
+        ] {
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                window.render_frame(cx);
+                assert_ne!(window.find(button).disabled(), Some(true));
+                window.click(button, cx);
+            })
+            .unwrap();
+            cx.run_until_parked();
+            cx.update(|cx| {
+                assert!(
+                    app.read(cx).working.error.is_none(),
+                    "{:?}",
+                    app.read(cx).working.error
+                )
+            });
+            assert_eq!(directory.path().join("new.txt").exists(), exists);
+        }
+        assert_eq!(
+            std::fs::read(directory.path().join("new.txt")).unwrap(),
+            b"recover this content\n"
+        );
+        for (button, area) in [
+            ("stage-current-file", Area::Staged),
+            ("undo-write", Area::Untracked),
+            ("redo-write", Area::Staged),
+        ] {
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                window.render_frame(cx);
+                window.click(button, cx);
+            })
+            .unwrap();
+            cx.run_until_parked();
+            cx.update(|cx| assert_eq!(app.read(cx).working.changes[0].area, area));
+        }
+        cx.update_window(handle, |_, window, cx| {
+            app.update(cx, |app, cx| app.refresh(&Refresh, window, cx));
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update(|cx| {
+            app.update(cx, |app, cx| {
+                assert!(app.write_history.can_undo());
+                app.set_access_mode(AccessMode::ReadOnly, cx);
+                app.restore_write(true, cx);
+                assert!(app.write_task.is_none());
+            })
+        });
+        let other = tempfile::tempdir().unwrap();
+        git(other.path(), &["init", "-b", "main"]);
+        cx.update(|cx| app.update(cx, |app, cx| app.load(other.path().to_owned(), cx)));
+        cx.run_until_parked();
+        cx.update(|cx| {
+            assert!(!app.read(cx).write_history.can_undo());
+            assert!(!app.read(cx).write_history.can_redo());
+        });
     }
 
     #[gpui_kit::test]

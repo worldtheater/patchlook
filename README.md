@@ -53,7 +53,7 @@ Text diffs require UTF-8. Supported images are shown as previews; other binary f
 
 ### Stage changes
 
-Turn off the **Read-only** switch in the title bar, then open **Changes**. The indicator is green while read-only is on and orange when writing is enabled. Check a file to stage it, or use the outlined square button in the right-hand line-number gutter to stage a complete contiguous change block. Uncheck a staged file or block to unstage it. Each file appears once; partially staged files show their block progress. Staged blocks keep a softer diff background in place. If the index contains a third version of the same block, separate labelled comparisons show HEAD → Index and Index → Working tree.
+Click the lock icon in the title bar to enter **Read/write** mode, then open **Changes**. Hover over the lock to see the current mode. A closed lock and green indicator mean read-only; an open lock and orange indicator mean read/write. Check a file to stage it, or use the outlined square button in the right-hand line-number gutter to stage a complete contiguous change block. Uncheck a staged file or block to unstage it. Each file appears once; partially staged files show their block progress. Staged blocks keep a softer diff background in place. If the index contains a third version of the same block, separate labelled comparisons show HEAD → Index and Index → Working tree.
 
 The tree separates tracked changes and untracked files into collapsible groups. Folder and group buttons include only their own descendants. Click an empty or partially checked folder to stage its remaining changes; click a fully checked folder to unstage its changes.
 
@@ -61,7 +61,9 @@ These controls update the real Git index. Binary files, symlinks, submodule revi
 
 In an unstaged diff, the `»` discard button in the left-hand gutter **discards the entire block** after confirmation, restoring its content from the staging area. Other changes and the index stay untouched. Discarding a new file’s block deletes that file. Staging and unstaging alone never change working-tree contents.
 
-Turning **Read-only** back on leaves staged changes intact. Each new application window starts read-only. To review and commit everything currently staged, use your terminal:
+The **Undo** and **Redo** buttons beside the filename restore staging and discard operations made in this window, including a new file deleted by discard. Each click is one step, even for a folder, and the history spans files in the current repository. Switching repositories or closing the window clears it. Recovery stops if HEAD or the affected contents have changed externally; unrelated changes are left alone.
+
+Switching back to **Read-only** leaves staged changes intact. Each new application window starts read-only. To review and commit everything currently staged, use your terminal:
 
 ```sh
 git diff --cached

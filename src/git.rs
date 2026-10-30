@@ -1,6 +1,7 @@
 //! Git access. Arguments are passed directly to Git, never to a shell.
 mod review;
 mod staging;
+mod undo;
 use anyhow::{Context, Result, bail, ensure};
 pub use review::{ReviewPatch, merge_working_changes};
 pub use staging::{AccessMode, StageSelection, StagingPatch};
@@ -10,6 +11,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, Output, Stdio},
 };
+pub use undo::{WriteHistory, WriteScope};
 
 pub const HISTORY_PAGE_SIZE: usize = 100;
 

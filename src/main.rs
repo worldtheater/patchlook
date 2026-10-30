@@ -30,7 +30,6 @@ fn main() {
             light.colors.secondary_hover = light_overrides.colors.secondary_hover;
             light.colors.secondary_active = light_overrides.colors.secondary_active;
             light.colors.button_active = light_overrides.colors.button_active;
-            light.colors.switch_thumb = light_overrides.colors.switch_thumb;
             if let Some(overrides) = light_overrides.highlight {
                 let highlight = light
                     .highlight

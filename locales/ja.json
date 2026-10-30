@@ -107,14 +107,13 @@
   "viewed_branch_tooltip": "閲覧中のブランチ: {branch}\n作業ツリーのブランチ: {worktree}",
   "read_only_mode": "読み取り専用",
   "read_write_mode": "読み書き",
-  "access_mode_help": "読み取り専用がオンの間は、変更のステージング、ステージング解除、破棄などの操作はできません。",
   "stage_file": "ファイルをステージ",
   "unstage_file": "ファイルのステージを解除",
   "stage_block": "変更ブロックをステージ",
   "unstage_block": "変更ブロックのステージを解除",
   "discard_block": "この変更ブロックを破棄",
   "discard_block_title": "この変更ブロックを破棄しますか？",
-  "discard_block_description": "ステージング領域の内容に戻します。他の変更とステージ済みの内容は保持されます。新規ファイルは削除されます。この操作は取り消せません。",
+  "discard_block_description": "ステージング領域の内容に戻します。他の変更とステージ済みの内容は保持されます。新規ファイルは削除されます。リポジトリを切り替えるかウィンドウを閉じるまでは、元に戻せます。",
   "keep_changes": "変更を保持",
   "write_failed": "変更を更新できません",
   "write_refresh_failed": "変更は保存されましたが、再読み込みに失敗しました。リポジトリを再読み込みしてください",
@@ -127,5 +126,6 @@
   "staging_progress": "ステージ済み {staged}/{total}",
   "review_index": "ステージ済みの変更 · HEAD → インデックス",
   "review_worktree": "未ステージの変更 · インデックス → 作業ツリー",
-  "read_only": "読み取り専用"
+  "undo_write": "直前のステージングまたは破棄を元に戻す",
+  "redo_write": "ステージングまたは破棄をやり直す"
 }

@@ -584,21 +584,19 @@ impl ChangeTree {
                             None => node.path.clone(),
                         };
                         let status_color = file_status_color(node.status, cx);
+                        let row_height = px(22.);
                         h_flex()
                             .id(item.id.clone())
                             .test_support()
-                            .h(px(22.))
+                            .h(row_height)
                             .w_full()
                             .min_w_0()
                             .pr_2()
                             .pl(px(8. + entry.depth() as f32 * 18.))
                             .gap_1()
                             .text_sm()
-                            .line_height(relative(1.))
+                            .line_height(row_height)
                             .cursor_pointer()
-                            .tooltip(move |window, cx| {
-                                Tooltip::new(tooltip.clone()).build(window, cx)
-                            })
                             .when(state.is_selected(), |row| {
                                 row.bg(cx.theme().secondary_active).when_some(
                                     file_index,
@@ -663,8 +661,12 @@ impl ChangeTree {
                             })
                             .child(
                                 div()
+                                    .id(format!("tree-name:{}", item.id))
                                     .min_w_0()
                                     .truncate()
+                                    .tooltip(move |window, cx| {
+                                        Tooltip::new(tooltip.clone()).build(window, cx)
+                                    })
                                     .when(file_index.is_some(), |label| {
                                         label.text_color(status_color)
                                     })

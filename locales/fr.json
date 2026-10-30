@@ -107,14 +107,13 @@
   "viewed_branch_tooltip": "Branche consultée : {branch}\nBranche de travail : {worktree}",
   "read_only_mode": "Lecture seule",
   "read_write_mode": "Lecture/écriture",
-  "access_mode_help": "Lorsque la lecture seule est activée, vous ne pouvez pas indexer, désindexer ou abandonner des modifications.",
   "stage_file": "Indexer le fichier",
   "unstage_file": "Désindexer le fichier",
   "stage_block": "Indexer le bloc",
   "unstage_block": "Désindexer le bloc",
   "discard_block": "Abandonner ce bloc",
   "discard_block_title": "Abandonner ce bloc de modifications ?",
-  "discard_block_description": "Restaure le contenu de l’index. Les autres modifications et l’index sont conservés. Un nouveau fichier sera supprimé. Cette action est irréversible.",
+  "discard_block_description": "Restaure le contenu de l’index. Les autres modifications et l’index sont conservés. Un nouveau fichier sera supprimé. Vous pouvez annuler cette opération avant de changer de dépôt ou de fermer la fenêtre.",
   "keep_changes": "Conserver les modifications",
   "write_failed": "Impossible de mettre à jour les modifications",
   "write_refresh_failed": "Modifications enregistrées, mais actualisation échouée. Actualisez le dépôt",
@@ -127,5 +126,6 @@
   "staging_progress": "Indexé {staged}/{total}",
   "review_index": "Modifications indexées · HEAD → Index",
   "review_worktree": "Modifications non indexées · Index → Copie de travail",
-  "read_only": "Lecture seule"
+  "undo_write": "Annuler la dernière opération d’indexation ou d’abandon",
+  "redo_write": "Rétablir la dernière opération d’indexation ou d’abandon"
 }

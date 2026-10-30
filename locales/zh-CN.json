@@ -107,14 +107,13 @@
   "viewed_branch_tooltip": "正在浏览：{branch}\n工作区分支：{worktree}",
   "read_only_mode": "只读模式",
   "read_write_mode": "读写模式",
-  "access_mode_help": "只读开关打开时，不能进行暂存、取消暂存、丢弃改动等操作。",
   "stage_file": "暂存文件",
   "unstage_file": "取消暂存文件",
   "stage_block": "暂存改动块",
   "unstage_block": "取消暂存改动块",
   "discard_block": "丢弃这段改动",
   "discard_block_title": "丢弃这段改动？",
-  "discard_block_description": "恢复为暂存区中的内容。其他改动与暂存区保持不变；新增文件将被删除。此操作无法撤销。",
+  "discard_block_description": "恢复为暂存区中的内容。其他改动与暂存区保持不变；新增文件将被删除。切换仓库或关闭窗口前，可以撤销此操作。",
   "keep_changes": "保留改动",
   "write_failed": "无法更新改动",
   "write_refresh_failed": "改动已保存，但刷新失败。请刷新仓库",
@@ -127,5 +126,6 @@
   "staging_progress": "已暂存 {staged}/{total}",
   "review_index": "已暂存改动 · HEAD → 暂存区",
   "review_worktree": "未暂存改动 · 暂存区 → 工作区",
-  "read_only": "只读"
+  "undo_write": "撤销上次暂存或丢弃操作",
+  "redo_write": "重做上次暂存或丢弃操作"
 }

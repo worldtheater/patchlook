@@ -107,14 +107,13 @@
   "viewed_branch_tooltip": "Browsing branch: {branch}\nWorking-tree branch: {worktree}",
   "read_only_mode": "Read-only",
   "read_write_mode": "Read/write",
-  "access_mode_help": "When read-only is on, you cannot stage, unstage, or discard changes.",
   "stage_file": "Stage file",
   "unstage_file": "Unstage file",
   "stage_block": "Stage block",
   "unstage_block": "Unstage block",
   "discard_block": "Discard block",
   "discard_block_title": "Discard this block?",
-  "discard_block_description": "Restore this block from the staging area. Other changes and staged content are kept. A new file will be deleted. This cannot be undone.",
+  "discard_block_description": "Restore this block from the staging area. Other changes and staged content are kept. A new file will be deleted. This can be undone in this window until you switch repositories.",
   "keep_changes": "Keep changes",
   "write_failed": "Unable to update changes",
   "write_refresh_failed": "Changes saved, but refresh failed. Refresh the repository",
@@ -127,5 +126,6 @@
   "staging_progress": "Staged {staged}/{total}",
   "review_index": "Staged changes · HEAD → Index",
   "review_worktree": "Unstaged changes · Index → Working tree",
-  "read_only": "Read-only"
+  "undo_write": "Undo last stage or discard operation",
+  "redo_write": "Redo last stage or discard operation"
 }

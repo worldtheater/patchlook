@@ -107,14 +107,13 @@
   "viewed_branch_tooltip": "正在瀏覽：{branch}\n工作區分支：{worktree}",
   "read_only_mode": "唯讀模式",
   "read_write_mode": "讀寫模式",
-  "access_mode_help": "唯讀開關開啟時，無法進行暫存、取消暫存、捨棄變更等操作。",
   "stage_file": "暫存檔案",
   "unstage_file": "取消暫存檔案",
   "stage_block": "暫存變更區塊",
   "unstage_block": "取消暫存變更區塊",
   "discard_block": "捨棄這段變更",
   "discard_block_title": "捨棄這段變更？",
-  "discard_block_description": "還原為暫存區中的內容。其他變更與暫存區保持不變；新增檔案將被刪除。此操作無法復原。",
+  "discard_block_description": "還原為暫存區中的內容。其他變更與暫存區保持不變；新增檔案將被刪除。切換儲存庫或關閉視窗前，可以復原此操作。",
   "keep_changes": "保留變更",
   "write_failed": "無法更新變更",
   "write_refresh_failed": "變更已儲存，但重新整理失敗。請重新整理儲存庫",
@@ -127,5 +126,6 @@
   "staging_progress": "已暫存 {staged}/{total}",
   "review_index": "已暫存變更 · HEAD → 暫存區",
   "review_worktree": "未暫存變更 · 暫存區 → 工作區",
-  "read_only": "唯讀"
+  "undo_write": "復原上次暫存或捨棄操作",
+  "redo_write": "重做上次暫存或捨棄操作"
 }
