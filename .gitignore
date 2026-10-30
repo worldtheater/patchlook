@@ -15,7 +15,8 @@ __pycache__/
 Thumbs.db
 Desktop.ini
 
-# Editor temporary files
+# Local IDE configuration and editor temporary files
+.idea/
 *.swp
 *.swo
 *~

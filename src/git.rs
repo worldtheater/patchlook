@@ -202,7 +202,13 @@ impl Repository {
     }
 
     pub fn snapshot(&self) -> Result<Snapshot> {
-        let branch = self.branch_name()?;
+        Ok(Snapshot {
+            branch: self.branch_name()?,
+            changes: self.working_changes()?,
+        })
+    }
+
+    pub fn working_changes(&self) -> Result<Vec<Change>> {
         let bytes = output(
             command(&self.root).args([
                 "status",
@@ -213,10 +219,7 @@ impl Repository {
             ]),
             false,
         )?;
-        Ok(Snapshot {
-            branch,
-            changes: parse_status(&bytes)?,
-        })
+        parse_status(&bytes)
     }
 
     pub fn branches(&self) -> Result<Vec<Branch>> {

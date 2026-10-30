@@ -160,7 +160,7 @@ impl StagingPatch {
         }
     }
 
-    fn partial_patch(
+    pub(super) fn partial_patch(
         &self,
         change: &Change,
         selection: StageSelection,
@@ -278,7 +278,7 @@ impl Repository {
             "Resolve merge conflicts before staging in Patchlook"
         );
         ensure!(
-            self.snapshot()?.changes.contains(change),
+            self.working_changes()?.contains(change),
             "File status changed; refresh before staging"
         );
         let displayed = displayed.context("No text patch available for partial staging")?;
@@ -306,7 +306,7 @@ impl Repository {
             changes.iter().all(|change| change.area != Area::Conflict),
             "Resolve merge conflicts before staging in Patchlook"
         );
-        let current = self.snapshot()?.changes;
+        let current = self.working_changes()?;
         let merged = merge_working_changes(&current);
         ensure!(
             changes
@@ -361,7 +361,7 @@ impl Repository {
             "Only unstaged changes can be discarded"
         );
         ensure!(
-            self.snapshot()?.changes.contains(change),
+            self.working_changes()?.contains(change),
             "File status changed; refresh before discarding"
         );
         ensure!(
@@ -372,7 +372,7 @@ impl Repository {
         self.apply_patch(&patch, false)
     }
 
-    fn apply_patch(&self, patch: &str, cached: bool) -> Result<()> {
+    pub(super) fn apply_patch(&self, patch: &str, cached: bool) -> Result<()> {
         let mut cmd = command(&self.root);
         cmd.arg("apply");
         if cached {

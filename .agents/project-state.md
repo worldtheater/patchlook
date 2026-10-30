@@ -7,9 +7,9 @@
 ## Current Architecture
 - `src/main.rs` 初始化窗口、菜单、主题；包／二进制名 `patchlook`，标识 `dev.patchlook.app`。`build.rs` 将 ICO 嵌入 Windows EXE 资源 ID 1，失败中止构建；标题栏操作区隔离原生拖动命中。
 - `src/git.rs` 封装 Git CLI，参数不经 shell，NUL 分隔路径，禁用可选锁、外部 diff 和 textconv。完整上下文取 `i32::MAX / 2`，inter-hunk context 固定 0，避免旧版 Windows Git 的整数溢出。
-- `src/git/staging.rs` 以 add／reset 更新明确路径，以完整上下文补丁和 `git apply --cached` 更新改动块；丢弃反向应用到工作区，保留索引。部分操作核对显示快照，拒绝过期选择。`review.rs` 合并同路径条目，通常展示 HEAD → 工作区并标注块状态；索引有第三版本、抵消或无法匹配时分为 HEAD → 索引及索引 → 工作区两组，保留索引独有内容。
-- `src/git/undo.rs` 记录写入前后的受影响索引条目或文件字节／权限；恢复前核对 HEAD 和相关快照，只恢复明确路径，不覆盖无关变化。保留 `git add -N` 意向添加标记，避免撤销暂存后误提交空文件；工作区恢复以临时文件替换。
-- `src/app.rs` 的工作区／历史 `ChangeState` 独立保存列表、选择、树、滚动、diff、错误和任务；`HistoryState` 供 Repos／History 共用。只缓存当前仓库；已加载 Tab 切换不读 Git，隐藏页结果写回所属状态；切仓库／刷新成功后替换并使另一组失效，浏览分支只重载历史。列表、统计和首个预览后台准备后整体替换，失败保留可用快照。
+- `src/git/staging.rs` 以 add／reset 更新明确路径，以完整上下文补丁和 `git apply --cached` 更新改动块；丢弃反向应用到工作区，保留索引。部分操作在写入前统一核对状态与两侧显示补丁，拒绝过期选择，避免下层重复验证。只需改动列表时不查询分支；预览与进度复用同次读取的状态／补丁。`review.rs` 合并同路径条目，通常展示 HEAD → 工作区并标注块状态；索引有第三版本、抵消或无法匹配时分为 HEAD → 索引及索引 → 工作区两组，保留索引独有内容。
+- `src/git/undo.rs` 记录写入前后的受影响索引条目或文件字节／权限；恢复前核对 HEAD 和相关快照，只恢复明确路径，不覆盖无关变化；成功的写入／撤销／重做返回受影响路径供刷新使用。保留 `git add -N` 意向添加标记，避免撤销暂存后误提交空文件；工作区恢复以临时文件替换。
+- `src/app.rs` 的工作区／历史 `ChangeState` 独立保存列表、选择、树、滚动、diff、错误和任务；`HistoryState` 供 Repos／History 共用。只缓存当前仓库；已加载 Tab 切换不读 Git，隐藏页结果写回所属状态；切仓库／刷新成功后替换并使另一组失效，浏览分支只重载历史。列表、统计和首个预览后台准备后整体替换，失败保留可用快照。写入后读取新状态，重算受影响路径、状态变化项及当前预览，其他行复用已有统计／进度，避免随部分暂存或未跟踪文件数量反复读取 diff；手动刷新仍完整读取外部改动。
 - 文本解析与虚拟滚动使用 Kit `DiffFile`／`DiffState`；视口／行高变化在绘制结束后通知，首次布局不依赖移动窗口。`src/image_diff.rs` 处理图片；`src/external_open.rs` 通过 NSWorkspace／Windows Shell／GIO 列出系统应用及图标，打开工作区最新文件；删除文件打开旧版本临时副本，保留至退出。
 - `src/change_tree.rs` 压缩单一路径目录；已跟踪／未跟踪分组独立折叠、批量操作限定后代索引，避免同名目录跨组。`file_icons.rs` 内嵌 35 个 Material Icon Theme MIT SVG。`preferences.rs` 读写系统配置目录的 `preferences.json`，显式保存、临时文件替换。
 - `strings.rs` 管理九语言资源；`themes/` 统一配色。浅色沿用 Kit 语法主题，仅正文及普通变量／属性／嵌入文本调深灰，深色自定义低饱和主题；正文取 `editor_foreground`。激活窗口重读系统语言，订阅系统外观。
@@ -47,8 +47,8 @@
 暂无。
 
 ## Verification
-- 当前 macOS 通过 fmt、Clippy、93 项串行 Rust 测试、Release 构建及 4 项 Python 打包测试。真实提交测试经生产 API及并排／行内按钮选择后执行普通 git commit，核对完整提交树／字节，覆盖部分选择、取消、原有暂存、第三版本、目录增删改名／二进制／特殊路径、CRLF／无末尾换行、丢弃与撤销重做、初始提交和意向添加。恢复测试覆盖权限、外部冲突、只读及历史栈边界。
-- 当前预览未替换／重启以保留用户撤销记录，修复已构建至 `target/release/patchlook`；用户测试仓库未改动。视觉效果由用户验收，本轮无原生 UI 自动操作。Windows／Linux 当前改动已通过云端检查与打包，原生交互仍待实机验收；Kit 独立测试此前受未缓存依赖阻挡，消费方覆盖所用交互。
+- 当前 macOS 通过 fmt、Clippy、94 项串行 Rust 测试、Release 构建及 4 项 Python 打包测试。真实提交测试经生产 API及并排／行内按钮选择后执行普通 git commit，核对完整提交树／字节，覆盖部分选择、取消、原有暂存、第三版本、目录增删改名／二进制／特殊路径、CRLF／无末尾换行、丢弃与撤销重做、初始提交和意向添加。恢复测试覆盖权限、外部冲突、只读及历史栈边界。
+- 暂存刷新性能优化已完成本地验证，本地 Release 已更新，`dist/Patchlook.app` 已替换、重新 ad-hoc 签名并启动供用户验收；用户测试仓库未改动。52 文件／37 二进制（含未跟踪及部分暂存）样例中，写入后刷新约 80–90 ms、完整刷新约 870–920 ms，统计／进度结果一致；这是本机 macOS 对照，未代表 Windows 耗时。小样例单次操作 Git 调用由 32 降为 18。视觉效果由用户验收，本轮无原生 UI 自动操作。最新性能优化待 Windows／Linux 构建及实机验收；Kit 独立测试此前受未缓存依赖阻挡，消费方覆盖所用交互。
 - 开发构建 `623ea74`（运行 `41053969904`）三平台检查、测试、Release 编译和打包通过。Windows 测试夹具固定 LF 并使用本机路径分隔符定位，真实提交回归通过。Windows x64 ZIP 已核对 artifact 摘要、压缩完整性、PE 架构和许可证；本地位于 `dist/windows-test-623ea74/`，GitHub artifact `12976173611`。开发包沿用 0.1.4 元数据，不替换正式 Release。
 - 最新正式版 v0.1.4（`c45ae39`）三平台 CI／打包通过并公开发布 Latest：macOS arm64 DMG／ZIP、Windows amd64 ZIP、Linux x86_64 tar.gz；macOS Developer ID、Hardened Runtime、公证、票据与 Gatekeeper 验证通过。v0.1.3 保持旧草稿。
 - 旧 Windows Git 的 hunk 溢出已模拟复现并验证修复；LF／CRLF、历史／工作区／索引均覆盖。Windows／Linux 菜单的动作、焦点和拖动隔离有回归。首次布局修复已由用户确认 macOS 正常；未量化帧耗时，跨平台视觉及分栏拖动后重启恢复仍属手工验收边界。

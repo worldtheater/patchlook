@@ -271,7 +271,7 @@ impl WriteHistory {
         mode: AccessMode,
         scope: WriteScope,
         write: impl FnOnce() -> Result<()>,
-    ) -> Result<()> {
+    ) -> Result<Vec<PathBuf>> {
         ensure!(
             mode == AccessMode::ReadWrite,
             "Repository is in read-only mode"
@@ -281,6 +281,7 @@ impl WriteHistory {
         write()?;
         let after = Snapshot::read(repo, &scope)
             .context("Changes were saved, but the undo record could not be completed")?;
+        let paths = scope.paths().to_vec();
         if before != after {
             self.undo.push(Arc::new(WriteRecord {
                 root: repo.root.clone(),
@@ -291,21 +292,23 @@ impl WriteHistory {
             }));
             self.redo.clear();
         }
-        Ok(())
+        Ok(paths)
     }
 
-    pub fn undo(&mut self, repo: &Repository, mode: AccessMode) -> Result<()> {
+    pub fn undo(&mut self, repo: &Repository, mode: AccessMode) -> Result<Vec<PathBuf>> {
         let record = self.undo.last().context("Nothing to undo")?;
         record.restore(repo, mode, true)?;
+        let paths = record.scope.paths().to_vec();
         self.redo.push(self.undo.pop().unwrap());
-        Ok(())
+        Ok(paths)
     }
 
-    pub fn redo(&mut self, repo: &Repository, mode: AccessMode) -> Result<()> {
+    pub fn redo(&mut self, repo: &Repository, mode: AccessMode) -> Result<Vec<PathBuf>> {
         let record = self.redo.last().context("Nothing to redo")?;
         record.restore(repo, mode, false)?;
+        let paths = record.scope.paths().to_vec();
         self.undo.push(self.redo.pop().unwrap());
-        Ok(())
+        Ok(paths)
     }
 }
 

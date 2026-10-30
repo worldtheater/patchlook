@@ -53,11 +53,19 @@ pub struct ReviewPatch {
 
 impl Repository {
     pub fn review_patch(&self, change: &Change) -> Result<ReviewPatch> {
-        let entries = self
-            .snapshot()?
-            .changes
-            .into_iter()
+        self.review_patch_from_changes(change, &self.working_changes()?)
+    }
+
+    /// Reuse the status already read for this refresh; write validation always reads afresh.
+    pub fn review_patch_from_changes(
+        &self,
+        change: &Change,
+        changes: &[Change],
+    ) -> Result<ReviewPatch> {
+        let entries = changes
+            .iter()
             .filter(|entry| entry.path == change.path)
+            .cloned()
             .collect::<Vec<_>>();
         ensure!(
             !entries.is_empty(),
@@ -172,15 +180,23 @@ impl Repository {
         review: &ReviewPatch,
         block: usize,
     ) -> Result<()> {
+        ensure!(
+            mode == AccessMode::ReadWrite,
+            "Repository is in read-only mode"
+        );
         review.validate(self)?;
         let action = review.actions.get(block).context("Unknown review block")?;
         let version = &review.versions[action.version];
-        self.set_staged(
-            mode,
-            &version.change,
-            StageSelection::Block(action.block),
-            version.text.as_deref(),
-        )
+        let patch = version
+            .text
+            .as_ref()
+            .context("No text patch")?
+            .partial_patch(
+                &version.change,
+                StageSelection::Block(action.block),
+                version.change.area == Area::Staged,
+            )?;
+        self.apply_patch(&patch, true)
     }
 
     pub fn discard_review_block(
@@ -189,15 +205,23 @@ impl Repository {
         review: &ReviewPatch,
         block: usize,
     ) -> Result<()> {
+        ensure!(
+            mode == AccessMode::ReadWrite,
+            "Repository is in read-only mode"
+        );
         review.validate(self)?;
         let action = review.actions.get(block).context("Unknown review block")?;
         let version = &review.versions[action.version];
-        self.discard_block(
-            mode,
-            &version.change,
-            action.block,
-            version.text.as_deref().context("No text patch")?,
-        )
+        ensure!(
+            matches!(version.change.area, Area::Unstaged | Area::Untracked),
+            "Only unstaged changes can be discarded"
+        );
+        let patch = version
+            .text
+            .as_ref()
+            .context("No text patch")?
+            .partial_patch(&version.change, StageSelection::Block(action.block), true)?;
+        self.apply_patch(&patch, false)
     }
 }
 
@@ -274,8 +298,7 @@ impl ReviewPatch {
     }
     fn validate(&self, repo: &Repository) -> Result<()> {
         let current = repo
-            .snapshot()?
-            .changes
+            .working_changes()?
             .into_iter()
             .filter(|entry| entry.path == self.versions[0].change.path)
             .collect::<Vec<_>>();

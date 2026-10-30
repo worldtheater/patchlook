@@ -76,15 +76,7 @@ impl FileContent {
             )?))
         } else {
             if commit.is_none() {
-                let review = Arc::new(repo.review_patch(change)?);
-                let files = review
-                    .patches()
-                    .map(DiffFile::parse)
-                    .collect::<Result<Vec<_>, _>>()?
-                    .into_iter()
-                    .flatten()
-                    .collect();
-                Ok(Self::Text(files, Some(review)))
+                Self::from_review(repo.review_patch(change)?)
             } else {
                 Ok(Self::Text(
                     DiffFile::parse(&repo.patch(change, commit)?)?,
@@ -92,6 +84,17 @@ impl FileContent {
                 ))
             }
         }
+    }
+
+    fn from_review(review: ReviewPatch) -> anyhow::Result<Self> {
+        let files = review
+            .patches()
+            .map(DiffFile::parse)
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .flatten()
+            .collect();
+        Ok(Self::Text(files, Some(Arc::new(review))))
     }
 }
 
@@ -105,14 +108,97 @@ struct PreparedChanges {
 }
 
 impl PreparedChanges {
+    /// A write refreshes its paths and the visible preview. Unrelated rows keep
+    /// their existing counts until explicit refresh, just as before the write.
+    fn after_write(repo: &Repository, previous: Self, touched: &[PathBuf]) -> anyhow::Result<Self> {
+        let raw = repo.working_changes()?;
+        let changes = merge_working_changes(&raw);
+        let preview_index = previous
+            .changes
+            .get(previous.preview_index)
+            .and_then(|selected| changes.iter().position(|c| c.path == selected.path))
+            .unwrap_or(0);
+        let old_indices = changes
+            .iter()
+            .map(|c| previous.changes.iter().position(|old| old == c))
+            .collect::<Vec<_>>();
+        let reload = changes
+            .iter()
+            .enumerate()
+            .map(|(i, c)| {
+                i == preview_index
+                    || old_indices[i].is_none()
+                    || touched.contains(&c.path)
+                    || c.previous_path
+                        .as_ref()
+                        .is_some_and(|p| touched.contains(p))
+            })
+            .collect::<Vec<_>>();
+        let refreshed_preview = reload
+            .iter()
+            .take(preview_index)
+            .filter(|reload| **reload)
+            .count();
+        let updated = Self::load(
+            repo,
+            raw.into_iter()
+                .filter(|entry| {
+                    changes
+                        .iter()
+                        .enumerate()
+                        .any(|(i, c)| reload[i] && c.path == entry.path)
+                })
+                .collect(),
+            None,
+            Some(refreshed_preview),
+        )?;
+        let mut stats = Vec::with_capacity(changes.len());
+        let mut progress = Vec::with_capacity(changes.len());
+        for (i, change) in changes.iter().enumerate() {
+            let (source, index) = if reload[i] {
+                (
+                    &updated,
+                    updated
+                        .changes
+                        .iter()
+                        .position(|c| c.path == change.path)
+                        .unwrap(),
+                )
+            } else {
+                (&previous, old_indices[i].unwrap())
+            };
+            stats.push(source.stats[index]);
+            progress.push(source.progress[index]);
+        }
+        Ok(Self {
+            changes,
+            stats,
+            progress,
+            preview: updated.preview,
+            preview_index,
+        })
+    }
+
     fn load(
         repo: &Repository,
         changes: Vec<Change>,
         commit: Option<&Commit>,
-        preview: bool,
+        preview_index: Option<usize>,
     ) -> anyhow::Result<Self> {
         let raw_stats = repo.file_stats(&changes, commit)?;
-        let (changes, stats) = if commit.is_none() {
+        if commit.is_some() {
+            let preview = preview_index
+                .and_then(|index| changes.get(index))
+                .map(|change| FileContent::load(repo, change, commit));
+            return Ok(Self {
+                progress: vec![None; changes.len()],
+                changes,
+                stats: raw_stats,
+                preview,
+                preview_index: preview_index.unwrap_or(0),
+            });
+        }
+        let (merged, stats) = {
             let merged = merge_working_changes(&changes);
             let stats = merged
                 .iter()
@@ -129,30 +215,40 @@ impl PreparedChanges {
                 })
                 .collect();
             (merged, stats)
-        } else {
-            (changes, raw_stats)
         };
-        let progress = changes
-            .iter()
+        let preview = preview_index
+            .and_then(|index| merged.get(index))
             .map(|change| {
+                if image_format(&change.path).is_some() {
+                    FileContent::load(repo, change, None)
+                } else {
+                    repo.review_patch_from_changes(change, &changes)
+                        .and_then(FileContent::from_review)
+                }
+            });
+        let progress = merged
+            .iter()
+            .enumerate()
+            .map(|(index, change)| {
                 if change.area == Area::Partial {
-                    repo.review_patch(change)
+                    if preview_index == Some(index)
+                        && let Some(Ok(FileContent::Text(_, Some(review)))) = &preview
+                    {
+                        return Ok(Some(review.progress()));
+                    }
+                    repo.review_patch_from_changes(change, &changes)
                         .map(|review| Some(review.progress()))
                 } else {
                     Ok(None)
                 }
             })
             .collect::<anyhow::Result<Vec<_>>>()?;
-        let preview = changes
-            .first()
-            .filter(|_| preview)
-            .map(|change| FileContent::load(repo, change, commit));
         Ok(Self {
-            changes,
+            changes: merged,
             stats,
             progress,
             preview,
-            preview_index: 0,
+            preview_index: preview_index.unwrap_or(0),
         })
     }
 }
@@ -464,7 +560,7 @@ impl Patchlook {
     fn write_repository(
         &mut self,
         stable_side: DiffSide,
-        write: impl FnOnce(&Repository, AccessMode, &mut WriteHistory) -> anyhow::Result<()>
+        write: impl FnOnce(&Repository, AccessMode, &mut WriteHistory) -> anyhow::Result<Vec<PathBuf>>
         + Send
         + 'static,
         cx: &mut Context<Self>,
@@ -477,11 +573,13 @@ impl Patchlook {
         };
         let mode = self.access_mode;
         let mut history = self.write_history.clone();
-        let selected = self
-            .working
-            .selected_file
-            .and_then(|i| self.working.changes.get(i))
-            .cloned();
+        let previous = PreparedChanges {
+            changes: self.working.changes.clone(),
+            stats: self.working.file_stats.clone(),
+            progress: self.working.progress.clone(),
+            preview: None,
+            preview_index: self.working.selected_file.unwrap_or(0),
+        };
         self.working.cancel_pending();
         self.working.files_loading = true;
         self.working.error = None;
@@ -489,23 +587,8 @@ impl Patchlook {
             let (history, result) = cx
                 .background_spawn(async move {
                     let result: anyhow::Result<anyhow::Result<PreparedChanges>> =
-                        write(&repo, mode, &mut history).map(|()| {
-                            let changes = repo.snapshot()?.changes;
-                            let merged = merge_working_changes(&changes);
-                            let preview_index = selected
-                                .as_ref()
-                                .and_then(|selected| {
-                                    merged.iter().position(|c| c.path == selected.path)
-                                })
-                                .unwrap_or(0);
-                            let mut prepared = PreparedChanges::load(&repo, changes, None, false)?;
-                            prepared.preview_index = preview_index;
-                            prepared.preview = prepared
-                                .changes
-                                .get(preview_index)
-                                .map(|change| FileContent::load(&repo, change, None));
-                            Ok(prepared)
-                        });
+                        write(&repo, mode, &mut history)
+                            .map(|paths| PreparedChanges::after_write(&repo, previous, &paths));
                     (history, result)
                 })
                 .await;
@@ -928,7 +1011,8 @@ impl Patchlook {
                         }
                     };
                     let commit = page.as_ref().and_then(|page| page.commits.first());
-                    let prepared = PreparedChanges::load(&repo, changes, commit, preview)?;
+                    let prepared =
+                        PreparedChanges::load(&repo, changes, commit, preview.then_some(0))?;
                     anyhow::Ok((repo, branch, branches, page, prepared))
                 })
                 .await;
@@ -1057,7 +1141,7 @@ impl Patchlook {
             let result = cx
                 .background_spawn(async move {
                     let snapshot = repo.snapshot()?;
-                    PreparedChanges::load(&repo, snapshot.changes, None, true)
+                    PreparedChanges::load(&repo, snapshot.changes, None, Some(0))
                 })
                 .await;
             let _ = this.update(cx, |this, cx| {
@@ -1126,7 +1210,12 @@ impl Patchlook {
                             .map(|commit| repo.commit_changes(commit))
                             .transpose()?
                             .unwrap_or_default();
-                        Some(PreparedChanges::load(&repo, changes, commit, preview)?)
+                        Some(PreparedChanges::load(
+                            &repo,
+                            changes,
+                            commit,
+                            preview.then_some(0),
+                        )?)
                     } else {
                         None
                     };
@@ -1203,7 +1292,7 @@ impl Patchlook {
             let result = cx
                 .background_spawn(async move {
                     let changes = repo.commit_changes(&commit)?;
-                    PreparedChanges::load(&repo, changes, Some(&commit), preview)
+                    PreparedChanges::load(&repo, changes, Some(&commit), preview.then_some(0))
                 })
                 .await;
             let _ = this.update(cx, |this, cx| {
@@ -3425,6 +3514,102 @@ mod tests {
     use patchlook::git::Area;
 
     #[test]
+    fn write_refresh_matches_full_refresh_with_many_unrelated_files() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        git(root, &["init", "-b", "main"]);
+        git(root, &["config", "core.autocrlf", "false"]);
+        for i in 0..20 {
+            std::fs::write(root.join(format!("binary-{i:02}.bin")), vec![0; 65536]).unwrap();
+        }
+        for i in 0..15 {
+            std::fs::write(
+                root.join(format!("text-{i:02}.txt")),
+                "one\nkeep\ntwo\nkeep\nthree\n",
+            )
+            .unwrap();
+        }
+        git(root, &["add", "-A"]);
+        git(root, &["commit", "-m", "base"]);
+        for i in 0..15 {
+            std::fs::write(
+                root.join(format!("text-{i:02}.txt")),
+                "ONE\nkeep\ntwo\nkeep\nthree\n",
+            )
+            .unwrap();
+        }
+        git(root, &["add", "-A"]);
+        for i in 0..15 {
+            std::fs::write(
+                root.join(format!("text-{i:02}.txt")),
+                "ONE\nkeep\nTWO\nkeep\nTHREE\n",
+            )
+            .unwrap();
+        }
+        for i in 0..37 {
+            let mut bytes = vec![1; 65536];
+            bytes[0] = 0;
+            std::fs::write(root.join(format!("binary-{i:02}.bin")), bytes).unwrap();
+        }
+        let repo = Repository::open(root).unwrap();
+        let raw = repo.working_changes().unwrap();
+        let changes = merge_working_changes(&raw);
+        assert_eq!(changes.len(), 52);
+        let target = changes
+            .iter()
+            .position(|c| c.path == std::path::Path::new("text-14.txt"))
+            .unwrap();
+        let mut prepared = PreparedChanges::load(&repo, raw, None, Some(target)).unwrap();
+        assert_eq!(
+            prepared
+                .stats
+                .iter()
+                .filter(|stats| stats.is_none())
+                .count(),
+            37
+        );
+        assert_eq!(prepared.progress[target], Some((1, 3)));
+        let change = prepared.changes[target].clone();
+        let review = repo.review_patch(&change).unwrap();
+        let mut history = WriteHistory::default();
+        let touched = history
+            .record(
+                &repo,
+                AccessMode::ReadWrite,
+                WriteScope::index(&[change]),
+                || repo.set_review_block(AccessMode::ReadWrite, &review, 1),
+            )
+            .unwrap();
+        for undo in [false, true] {
+            let touched = if undo {
+                history.undo(&repo, AccessMode::ReadWrite).unwrap()
+            } else {
+                touched.clone()
+            };
+            let start = Instant::now();
+            prepared = PreparedChanges::after_write(&repo, prepared, &touched).unwrap();
+            let selective_time = start.elapsed();
+            let start = Instant::now();
+            let complete =
+                PreparedChanges::load(&repo, repo.working_changes().unwrap(), None, Some(target))
+                    .unwrap();
+            eprintln!(
+                "52 files / 37 binary: write refresh {selective_time:?}, full refresh {:?}",
+                start.elapsed()
+            );
+            assert_eq!(prepared.changes, complete.changes);
+            assert_eq!(prepared.stats, complete.stats);
+            assert_eq!(prepared.progress, complete.progress);
+            assert_eq!(prepared.preview_index, target);
+            assert_eq!(
+                prepared.progress[target],
+                Some((if undo { 1 } else { 2 }, 3))
+            );
+            assert!(prepared.preview.as_ref().unwrap().is_ok());
+        }
+    }
+
+    #[test]
     fn failed_initial_preview_does_not_discard_the_file_list() {
         let directory = tempfile::tempdir().unwrap();
         assert!(
@@ -3448,7 +3633,7 @@ mod tests {
                 area: Area::Untracked,
             }],
             None,
-            true,
+            Some(0),
         )
         .unwrap();
         assert_eq!(prepared.changes.len(), 1);
@@ -5712,7 +5897,7 @@ mod tests {
                     repo,
                     app.history.files.changes.clone(),
                     app.current_commit(),
-                    true,
+                    Some(0),
                 )
                 .unwrap();
                 app.apply_changes(Source::Working, prepared, cx);
