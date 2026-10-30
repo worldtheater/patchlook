@@ -1,6 +1,6 @@
 [package]
 name = "patchlook"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2024"
 rust-version = "1.95"
 description = "A local Git diff and history viewer for macOS, Windows and Linux"
