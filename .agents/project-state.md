@@ -47,9 +47,9 @@
 暂无。
 
 ## Verification
-- 当前优化在 macOS 通过 fmt、Clippy、95 项串行 Rust 测试及 Release 构建。打包代码未改，4 项 Python 打包测试沿用 v0.1.5 验证。真实提交测试经生产 API及并排／行内按钮选择后执行普通 git commit，核对完整提交树／字节，覆盖部分选择、取消、原有暂存、第三版本、目录增删改名／二进制／特殊路径、CRLF／无末尾换行、丢弃与撤销重做、初始提交和意向添加；后者覆盖 SHA-1／SHA-256、已跟踪空文件与意向添加混合、可执行位及缺失工作区路径。恢复测试覆盖权限、外部冲突、只读及历史栈边界。
-- 当前优化将普通部分暂存块的 Git 调用由 18 次降至 12 次（首次暂存 17 → 11）；同一行内／并排按钮样例，本机 macOS 调用链中位数约 183 → 116 ms，不代表 Windows 耗时。52 文件／37 二进制样例及文本／空文件／重命名／第三版本计数均与 Git 对照一致。写入前过期校验、写入后快照、撤销外部冲突检查保留。代码 `52ebf84` 已推送，云端运行 `41090151095` 三平台检查、测试及开发打包均成功；Windows 95 项 Rust 测试、4 项 Python 测试通过。Windows 测试包（仍为 0.1.5）下载：`https://github.com/worldtheater/patchlook/actions/runs/41090151095/artifacts/12994327252`；本地副本 `dist/windows-test-52ebf84/patchlook-0.1.5-windows-amd64.zip` 已核对 GitHub 摘要、ZIP 完整性和 x86-64 PE。未替换预览／草稿资产或改动用户测试仓库；本次 Windows 响应效果待用户实测，视觉效果由用户验收。
-- v0.1.5（`0b5bdcc`，运行 `41080046456`）三平台串行测试、Release 编译、打包与草稿资产上传通过；macOS／Windows 各 94 项 Rust 测试、各平台 4 项 Python 打包测试。草稿已填写英文发布说明，含 macOS arm64 DMG／ZIP、Windows amd64 ZIP、Linux x86_64 tar.gz，未公开；地址 `https://github.com/worldtheater/patchlook/releases/tag/untagged-abec114b6274706a8309`。本地 `dist/v0.1.5/` 已核对四包摘要／结构；macOS 版本、Hardened Runtime、代码签名、app／DMG 公证票据及 Gatekeeper 均通过，Apple 提交 `b42616ce-7ade-4bce-b797-0a3032231608` 为 Accepted。
+- 当前优化在 macOS 通过 fmt、Clippy、95 项串行 Rust 测试及 Release 构建。三平台云端均通过 4 项 Python 打包测试。真实提交测试经生产 API及并排／行内按钮选择后执行普通 git commit，核对完整提交树／字节，覆盖部分选择、取消、原有暂存、第三版本、目录增删改名／二进制／特殊路径、CRLF／无末尾换行、丢弃与撤销重做、初始提交和意向添加；后者覆盖 SHA-1／SHA-256、已跟踪空文件与意向添加混合、可执行位及缺失工作区路径。恢复测试覆盖权限、外部冲突、只读及历史栈边界。
+- 当前优化将普通部分暂存块的 Git 调用由 18 次降至 12 次（首次暂存 17 → 11）；同一行内／并排按钮样例，本机 macOS 调用链中位数约 183 → 116 ms，不代表 Windows 耗时。52 文件／37 二进制样例及文本／空文件／重命名／第三版本计数均与 Git 对照一致。写入前过期校验、写入后快照、撤销外部冲突检查保留。代码 `52ebf84` 已推送并纳入 v0.1.5 草稿；用户测试仓库和运行中的预览未改动。Windows 实际响应和视觉效果由用户验收。
+- v0.1.5 草稿已更新至 `52ebf84`（运行 `41095790193`），三平台检查、串行测试、Release 编译和四个草稿附件替换均成功；macOS／Windows 各 95 项 Rust 测试，各平台 4 项 Python 打包测试通过。英文发布说明已包含快照／diff 读取优化，仍未公开；草稿地址 `https://github.com/worldtheater/patchlook/releases/tag/untagged-c032824ba99246700eb5`。本地 `dist/v0.1.5-52ebf84/` 已核对四包结构和云端摘要，并逐一与草稿附件 SHA-256 比对；macOS Developer ID、Hardened Runtime、app／DMG 公证票据及 Gatekeeper 验证通过，Apple 提交 `12af5700-255b-4221-9949-a815a772b7c9` 为 Accepted。
 - 最新正式版 v0.1.4（`c45ae39`）三平台 CI／打包通过并公开发布 Latest：macOS arm64 DMG／ZIP、Windows amd64 ZIP、Linux x86_64 tar.gz；macOS Developer ID、Hardened Runtime、公证、票据与 Gatekeeper 验证通过。v0.1.3 保持旧草稿。
 - 旧 Windows Git 的 hunk 溢出已模拟复现并验证修复；LF／CRLF、历史／工作区／索引均覆盖。Windows／Linux 菜单的动作、焦点和拖动隔离有回归。首次布局修复已由用户确认 macOS 正常；未量化帧耗时，跨平台视觉及分栏拖动后重启恢复仍属手工验收边界。
 
