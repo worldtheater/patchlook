@@ -106,7 +106,8 @@ jobs:
           sudo apt-get install -y gcc g++ clang cmake pkg-config libfontconfig-dev libwayland-dev libxkbcommon-x11-dev libx11-xcb-dev libssl-dev libzstd-dev libvulkan1 libglib2.0-dev
       - run: cargo fmt --all -- --check
       - run: cargo clippy --locked --all-targets -- -D warnings
-      - run: cargo test --locked
+      # UI tests change process-global locale; keep their interactions isolated.
+      - run: cargo test --locked -- --test-threads=1
       - run: python -m unittest discover -s scripts -p 'test_*.py'
       - run: cargo build --locked --release
       - name: Package signed and notarized macOS release

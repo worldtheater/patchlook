@@ -19,7 +19,7 @@
 ## Project Conventions
 - GPUI 统一从 `gpui_kit` 导入，复用控件与主题；九语言 `locales/*.json` 键及占位符一致。Kit 0.8.0 固定 fork revision `0917a5564505fceacfbbf966d90c0c19a7af9820`，已推送；维护 Cargo.lock，不提交本机 path override；升级见 `docs/development.md`。
 - Git 底层未暂存为索引对工作区，已暂存为 HEAD 对索引；根提交按新增，合并提交比较第一父提交。历史／搜索固定首次解析的分支 tip；关键词匹配完整说明子串（忽略大小写）或 SHA 前缀，流式扫描，每页 100 条加一条前瞻。
-- 常规检查：`cargo fmt --all -- --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`；构建变更另跑 Release；打包测试用 Python 3.11+ 执行 `python -m unittest discover -s scripts -p 'test_*.py'`。
+- 界面测试共享进程级 locale，CI 与本地均串行运行测试，避免跨用例干扰。常规检查：`cargo fmt --all -- --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked -- --test-threads=1`；构建变更另跑 Release；打包测试用 Python 3.11+ 执行 `python -m unittest discover -s scripts -p 'test_*.py'`。
 - 自动化测试用临时仓库／配置；交互验收用 Release。用户授权 `../patchlook_test` 作为可直接暂存／取消／丢弃的测试场地，恢复说明在其 README。动画、短暂切换等视觉效果由用户验收。
 - 缓存统一根 `target/`；dev 为 `line-tables-only`＋`split-debuginfo = "packed"`，test 继承 dev，保留增量，常用检查保持同一依赖特性组合。
 
