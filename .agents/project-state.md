@@ -48,7 +48,8 @@
 
 ## Verification
 - 当前 macOS 通过 fmt、Clippy、93 项串行 Rust 测试、Release 构建及 4 项 Python 打包测试。真实提交测试经生产 API及并排／行内按钮选择后执行普通 git commit，核对完整提交树／字节，覆盖部分选择、取消、原有暂存、第三版本、目录增删改名／二进制／特殊路径、CRLF／无末尾换行、丢弃与撤销重做、初始提交和意向添加。恢复测试覆盖权限、外部冲突、只读及历史栈边界。
-- 当前预览未替换／重启以保留用户撤销记录，修复已构建至 `target/release/patchlook`；用户测试仓库未改动。视觉效果由用户验收，本轮无原生 UI 自动操作。Windows／Linux 当前改动待云端构建及实机验证；Kit 独立测试此前受未缓存依赖阻挡，消费方覆盖所用交互。
+- 当前预览未替换／重启以保留用户撤销记录，修复已构建至 `target/release/patchlook`；用户测试仓库未改动。视觉效果由用户验收，本轮无原生 UI 自动操作。Windows／Linux 当前改动已通过云端检查与打包，原生交互仍待实机验收；Kit 独立测试此前受未缓存依赖阻挡，消费方覆盖所用交互。
+- 开发构建 `623ea74`（运行 `41053969904`）三平台检查、测试、Release 编译和打包通过。Windows 测试夹具固定 LF 并使用本机路径分隔符定位，真实提交回归通过。Windows x64 ZIP 已核对 artifact 摘要、压缩完整性、PE 架构和许可证；本地位于 `dist/windows-test-623ea74/`，GitHub artifact `12976173611`。开发包沿用 0.1.4 元数据，不替换正式 Release。
 - 最新正式版 v0.1.4（`c45ae39`）三平台 CI／打包通过并公开发布 Latest：macOS arm64 DMG／ZIP、Windows amd64 ZIP、Linux x86_64 tar.gz；macOS Developer ID、Hardened Runtime、公证、票据与 Gatekeeper 验证通过。v0.1.3 保持旧草稿。
 - 旧 Windows Git 的 hunk 溢出已模拟复现并验证修复；LF／CRLF、历史／工作区／索引均覆盖。Windows／Linux 菜单的动作、焦点和拖动隔离有回归。首次布局修复已由用户确认 macOS 正常；未量化帧耗时，跨平台视觉及分栏拖动后重启恢复仍属手工验收边界。
 
