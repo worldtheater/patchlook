@@ -14,7 +14,7 @@
   <a href="https://github.com/worldtheater/patchlook/issues">Report an issue</a>
 </p>
 
-Inspect local changes, explore commit history, and compare file versions. Patchlook starts in read-only mode; enable read/write mode when you want to stage changes.
+Review changes, explore history, and compare file versions in local repositories or on Linux servers over SSH. Enable read/write mode to stage changes in local repositories.
 
 ![Patchlook reviewing its own commit history in light and dark themes](docs/images/patchlook-light-dark.webp)
 
@@ -27,7 +27,7 @@ Inspect local changes, explore commit history, and compare file versions. Patchl
 - **Compare code** — switch between side-by-side and inline diffs, with syntax highlighting and changes highlighted within each line.
 - **Stay focused** — collapse unchanged sections, wrap long lines, or scroll both versions together.
 - **Compare images** — view versions side by side, fit them to the window, or zoom and pan to inspect details.
-- **Open in another app** — choose a system-recommended application or another program from the file header. Opens the latest working-tree file, or a temporary copy of the version before deletion for deleted files.
+- **Open in another app** — open the latest local file in a system-recommended app or another program. Deleted files open as a temporary copy of their previous version.
 - **Make it yours** — light, dark, and system themes, plus nine interface languages.
 
 ## Install
@@ -40,29 +40,33 @@ Browse [Releases](https://github.com/worldtheater/patchlook/releases) for publis
 | Windows | Windows 10+, x64 | Extract the ZIP and run `patchlook.exe`. |
 | Linux | x86_64, X11 or Wayland, Vulkan-capable graphics | Extract the tar.gz and run `./patchlook`. |
 
-[Git](https://git-scm.com/downloads) must be installed and available on `PATH`. macOS release builds are signed and notarized. Linux packages are built on Ubuntu 24.04 and require compatible system libraries.
+Local repositories require [Git](https://git-scm.com/downloads) on `PATH`. SSH connections require OpenSSH (`ssh` on `PATH`); the Linux server needs Git, a POSIX shell, and standard command-line tools. The server does not need Patchlook installed.
+
+macOS release builds are signed and notarized. Linux packages are built on Ubuntu 24.04 and require compatible system libraries.
 
 ## Getting started
 
-1. Choose **Open repository** and select a local Git repository.
+1. Choose **Open repository** for a local repository, or [connect via SSH](#connect-to-a-linux-server) for a remote one.
 2. Use **Changes** to review your working tree and staging area, or **History** to inspect commits.
 3. Use **Repos** to switch repositories or browse another branch.
 
-Refresh after making changes in another tool. Branch browsing uses local Git references; fetch updates with your usual Git client.
+Refresh after making changes in another tool. Branch browsing uses the opened repository's Git references; fetch updates with your usual Git client.
 
 Text diffs require UTF-8. Supported images are shown as previews; other binary files are listed without a content diff.
 
 ### Connect to a Linux server
 
-Open the repository menu in the title bar or the **+** menu above Recent, then choose **Connect via SSH…**. Enter the host, port, username, and repository's absolute Linux path separately. Choose **Password** or **SSH key** authentication. A key file can be selected, with an optional passphrase; leave the file empty to use default keys or your SSH agent. **Advanced options** contains the optional SSH config file. A blank port or username uses SSH config, then the normal OpenSSH default. Connections are saved in Recent.
+Available in **v0.1.6+**. Remote repositories are always read-only.
 
-The client needs OpenSSH (`ssh` on `PATH`). The server needs Git, a POSIX shell, and standard Linux command-line tools. On the first connection, Patchlook shows the server's SHA-256 host-key fingerprint. Compare it with a trusted source and choose **Trust and connect**. OpenSSH saves the confirmed key in its normal `known_hosts` file (or the file selected by your advanced SSH config); later connections verify it automatically. Cancelling saves nothing, and changed keys block the connection. Ordinary connections need no SSH config file. Passwords and key passphrases stay in memory for the current connection and are never saved in Recent or configuration files. Switching repositories and refreshing reuse connected SSH sessions, so switching back does not ask for the password again. Use the remote entry’s menu to disconnect or reconnect; removing the entry or closing the window also closes its session. After restarting the app, remote entries remain disconnected until opened. Jump hosts can be configured in SSH config and must authenticate independently, such as with keys or an agent. Interactive multi-factor authentication and password changes are not supported.
+1. Open the repository menu or the **+** menu above Recent and choose **Connect via SSH…**. Enter the host, port, username, and repository's absolute Linux path.
+2. Choose **Password** or **SSH key**. Leave the key file empty to use default keys or your SSH agent.
+3. Verify the server fingerprint against a trusted source on first connection, then choose **Trust and connect**. The confirmed key is remembered for later connections.
 
-Remote browsing includes working-tree changes, staged and untracked files, branches, history, search, and image previews. Refresh to read external changes. The lock stays closed; staging, discard, undo/redo, and opening remote files in a local external app are unavailable. No Patchlook installation is needed on the server.
+Passwords and key passphrases are not saved. Switching repositories keeps the connection; use the remote entry's menu to disconnect or reconnect. Closing the window ends its connections. SSH config files are optional and belong under **Advanced options**.
 
 ### Stage changes
 
-Click the lock icon in the title bar to enter **Read/write** mode, then open **Changes**. Hover over the lock to see the current mode. A closed lock and green indicator mean read-only; an open lock and orange indicator mean read/write. Check a file to stage it, or use the outlined square button in the right-hand line-number gutter to stage a complete contiguous change block. Uncheck a staged file or block to unstage it. Each file appears once; partially staged files show their block progress. Staged blocks keep a softer diff background in place. If the index contains a third version of the same block, separate labelled comparisons show HEAD → Index and Index → Working tree.
+In a local repository, click the lock icon in the title bar to enter **Read/write** mode, then open **Changes**. Hover over the lock to see the current mode. A closed lock and green indicator mean read-only; an open lock and orange indicator mean read/write. Check a file to stage it, or use the outlined square button in the right-hand line-number gutter to stage a complete contiguous change block. Uncheck a staged file or block to unstage it. Each file appears once; partially staged files show their block progress. Staged blocks keep a softer diff background in place. If the index contains a third version of the same block, separate labelled comparisons show HEAD → Index and Index → Working tree.
 
 The tree separates tracked changes and untracked files into collapsible groups. Folder and group buttons include only their own descendants. Click an empty or partially checked folder to stage its remaining changes; click a fully checked folder to unstage its changes.
 
