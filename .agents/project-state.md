@@ -36,7 +36,6 @@
 - About、多语言、图标、MIT 与文件图标许可随包分发；中英文 README 有真实浅／暗色截图及暂存／恢复说明。
 
 ### In Progress
-- [active] Windows SSH 换行修复包：旧测试包 `c0660a8` 嵌入 CRLF worker，Linux `sh` 在 `set -u` 退出；已固定 shell 的 LF 属性并补跨平台回归。下一步提交后核对新 Windows 产物内脚本并交付；不改服务器配置。
 - [paused] 提交说明局部高亮及实时拖选：用户决定等待 Kit Base 上游支持。当前 SelectableText 缺局部高亮 API，拖选变化未触发重绘；列表高亮已完成。
 
 ### Next
@@ -49,7 +48,7 @@
 暂无。
 
 ## Verification
-- Windows 首个 SSH 测试包 `c0660a8` 虽通过 CI，但用户实测连接失败；已从 EXE 确认嵌入 CRLF，并在 Linux fixture 复现同样的 `set: Illegal option`。修复后模拟 `core.autocrlf=true` 检出仍为 LF；新增回归已验证 CRLF 失败／LF 通过，transport 测试及真实 SSH 只读浏览回归通过。新 Windows 包待交付，客户端实际登录仍需复测。
+- Windows SSH 换行修复 `fd18f6e` 已推送；[Desktop 41421159824](https://github.com/worldtheater/patchlook/actions/runs/41421159824) 三平台检查、测试及打包成功。新 Windows 附件 `13130701469` 已校验摘要与 EXE 内 LF worker，并以 fixture SSH 用户在 Linux 上实际执行提取脚本、成功读取 Git 分支。旧 `c0660a8` 测试包含 CRLF、会在远端 `set -u` 失败，应使用新包；原报错已复现并修复，Windows 整体登录仍需用户复测。内包 SHA-256：`3b0e8e246d50a276c3147e0158a5a3d9fbe453c1e5b3b65bdcd6156a27877bd5`；未创建新 Release。
 - macOS 已通过 fmt、Clippy、常规串行 Rust 回归、Docker SSH／界面测试、Python 打包测试及 Release 构建；SSH 功能本地检查及 Windows 云端检查／打包已完成。SSH 覆盖密码／普通及加密私钥、主机信任及变更拒绝、凭据隔离、表单／历史／启动恢复、特殊路径／二进制／图片／分页、取消及断线重连、跨仓库复用、后台断开、窗口清理和远程写入拦截。用户已确认 macOS 经局域网连接 Windows WSL Ubuntu SSH 可用；Windows／Linux 客户端与网络延迟未实机验收。真实 Git 提交树／字节回归覆盖部分暂存、第三版本、目录／改名／二进制、CRLF、丢弃恢复、意向添加、SHA-1／SHA-256，撤销检查权限及外部冲突。遮罩动画在固定 fork revision 下构建，视觉效果由用户验收。
 - 当前优化将普通部分暂存块的 Git 调用由 18 次降至 12 次（首次暂存 17 → 11）；同一行内／并排按钮样例，本机 macOS 调用链中位数约 183 → 116 ms，不代表 Windows 耗时。52 文件／37 二进制样例及文本／空文件／重命名／第三版本计数均与 Git 对照一致。写入前过期校验、写入后快照、撤销外部冲突检查保留。代码 `52ebf84` 已推送并纳入 v0.1.5 正式版；用户测试仓库和运行中的预览未改动。Windows 实际响应和视觉效果由用户验收。
 - 最新正式版 [v0.1.5](https://github.com/worldtheater/patchlook/releases/tag/v0.1.5)（`52ebf84`，运行 `41095790193`）已于 2026-10-31 发布为 Latest；三平台检查、测试、构建成功，四个附件及摘要核对一致；macOS Developer ID、Hardened Runtime、app／DMG 公证票据和 Gatekeeper 验证通过。
