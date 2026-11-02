@@ -2859,7 +2859,6 @@ impl Patchlook {
         let name = branch
             .map(|branch| branch.name.clone())
             .unwrap_or_else(|| tr("head_branch").to_owned());
-        let group = SharedString::from(format!("branch-row-{index}"));
         let caption = branch.map(|branch| {
             if branch.is_head {
                 "worktree_branch"
@@ -2869,11 +2868,9 @@ impl Patchlook {
                 "local_branch"
             }
         });
-        let action_reference = reference.clone();
         div().h(px(36.)).px_2().pb_1().child(
             h_flex()
                 .id(("branch-row", index))
-                .group(group.clone())
                 .size_full()
                 .rounded_md()
                 .when(selected, |row| row.bg(cx.theme().secondary_active))
@@ -2920,25 +2917,6 @@ impl Patchlook {
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.browse_branch(reference.clone(), cx)
                         })),
-                )
-                .child(
-                    div()
-                        .flex_none()
-                        .pr_1()
-                        .invisible()
-                        .group_hover(group, |style| style.visible())
-                        .child(
-                            Button::new(("browse-branch", index))
-                                .icon(IconName::ArrowRight)
-                                .xsmall()
-                                .custom(list_action_style(cx))
-                                .disabled(self.loading)
-                                .tooltip(tr("browse_branch"))
-                                .accessibility_label(tr("browse_branch"))
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.browse_branch(action_reference.clone(), cx)
-                                })),
-                        ),
                 ),
         )
     }
@@ -7581,9 +7559,6 @@ mod tests {
             let file_row = window.find("tree-file-0").bounds();
             assert!(repo_row.right() <= commit_row.left());
             assert!(commit_row.right() <= file_row.left());
-            assert!(!window.find(("browse-branch", 1usize)).visible());
-            window.hover(("branch", 1usize), cx);
-            assert!(window.find(("browse-branch", 1usize)).visible());
             // Selecting the message after searching must copy the message, not the input.
             app.update(cx, |app, cx| {
                 app.history.search_available = true;

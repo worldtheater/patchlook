@@ -84,7 +84,6 @@
   "worktree_branch": "作業ツリー",
   "remote_branch": "リモート",
   "local_branch": "ローカル",
-  "browse_branch": "このブランチを表示",
   "branch_missing": "ブランチは存在しません",
   "back_to_files": "コミットのファイル一覧に戻る",
   "tree_file_count": "{count} ファイル",

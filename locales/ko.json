@@ -84,7 +84,6 @@
   "worktree_branch": "작업 트리",
   "remote_branch": "원격",
   "local_branch": "로컬",
-  "browse_branch": "이 브랜치 보기",
   "branch_missing": "브랜치가 더 이상 존재하지 않습니다",
   "back_to_files": "커밋 파일 목록으로 돌아가기",
   "tree_file_count": "파일 {count}개",

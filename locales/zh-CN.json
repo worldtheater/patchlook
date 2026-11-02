@@ -84,7 +84,6 @@
   "worktree_branch": "工作区",
   "remote_branch": "远程",
   "local_branch": "本地",
-  "browse_branch": "切换查看分支",
   "branch_missing": "分支已不存在",
   "back_to_files": "返回提交文件列表",
   "tree_file_count": "{count} 个文件",

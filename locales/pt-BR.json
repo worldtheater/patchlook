@@ -84,7 +84,6 @@
   "worktree_branch": "Trabalho",
   "remote_branch": "Remota",
   "local_branch": "Local",
-  "browse_branch": "Ver esta branch",
   "branch_missing": "A branch não existe mais",
   "back_to_files": "Voltar aos arquivos do commit",
   "tree_file_count": "Arquivos: {count}",
