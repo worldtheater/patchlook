@@ -35,7 +35,7 @@
 - About、多语言、图标、MIT 与文件图标许可随包分发；中英文 README 有真实浅／暗色截图及暂存／恢复说明。
 
 ### In Progress
-- [active] Windows SSH 测试包：当前功能已完成本地检查与切换竞态回归，提交后推送 main 触发 Desktop 构建。下一步核对 Windows 检查／打包结果和下载附件；客户端真实 SSH 登录仍由用户验收。
+- [active] Windows SSH 测试包：功能提交 `da580ad` 已推送。首轮 CI 的 macOS／Windows 标题栏点击用例受弹窗入场动画命中位置影响，已统一为静止布局测试并显式检查关闭；Linux 检查／打包成功。下一步重新核对三平台检查与 Windows 下载附件；客户端真实 SSH 登录仍由用户验收。
 - [paused] 提交说明局部高亮及实时拖选：用户决定等待 Kit Base 上游支持。当前 SelectableText 缺局部高亮 API，拖选变化未触发重绘；列表高亮已完成。
 
 ### Next

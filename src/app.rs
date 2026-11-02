@@ -6399,7 +6399,11 @@ mod tests {
             }
         }
 
-        cx.update(gpui_kit::init);
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            // Test clicks at stable bounds, independently of dialog entrance timing.
+            cx.set_reduce_motion(true);
+        });
         let directory = tempfile::tempdir().unwrap();
         git(directory.path(), &["init", "-b", "main"]);
         std::fs::write(directory.path().join("refresh.txt"), "Refresh me\n").unwrap();
@@ -6517,6 +6521,10 @@ mod tests {
         .unwrap();
         cx.run_until_parked();
         cx.update_window(handle, |_, window, cx| {
+            assert!(
+                !window.has_active_dialog(cx),
+                "SSH cancel must dismiss the dialog before clicking the titlebar"
+            );
             window.click("refresh", cx);
             assert!(app.read(cx).loading);
         })
