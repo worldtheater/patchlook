@@ -6,6 +6,7 @@ use crate::{
 };
 use gpui_kit::assets::IconName;
 use gpui_kit::base::{SelectableText, TestSupportExt};
+use gpui_kit::component::dialog::{DialogAction, DialogClose, DialogFooter};
 use gpui_kit::{
     component::{
         ActiveTheme, Disableable, FocusableExt, Icon, Selectable, Sizable, Theme, ThemeMode,
@@ -19,7 +20,7 @@ use gpui_kit::{
         input::{Input, InputEvent as TextInputEvent, InputState},
         menu::{DropdownMenu, PopupMenuItem},
         resizable::{h_resizable, resizable_panel, v_resizable},
-        scroll::{Scrollbar, ScrollbarMode},
+        scroll::{Scrollbar, ScrollbarHandle, ScrollbarMode},
         tooltip::Tooltip,
         v_flex,
     },
@@ -29,8 +30,9 @@ use gpui_kit::{
 use patchlook::{
     external_open::{ApplicationIcon, FileToOpen, OpenWith, applications_for},
     git::{
-        AccessMode, Area, Branch, Change, Commit, DiffStats, Repository, ReviewPatch,
-        StageSelection, WriteHistory, WriteScope, merge_working_changes,
+        AccessMode, Area, Branch, Change, Commit, DiffStats, Repository, RepositoryLocation,
+        ReviewPatch, SshConnectionControl, StageSelection, WriteHistory, WriteScope,
+        merge_working_changes,
     },
     preferences::{Appearance, Language, Layout, Preferences},
 };
@@ -388,9 +390,15 @@ pub struct Patchlook {
     #[cfg(test)]
     preferences_directory: tempfile::TempDir,
     repository: Option<Repository>,
+    // Keep authenticated sessions alive independently of the visible repository snapshot.
+    remote_sessions: HashMap<RepositoryLocation, Repository>,
+    selected_repository: Option<RepositoryLocation>,
+    pending_connection: Option<(RepositoryLocation, SshConnectionControl)>,
+    remote_errors: HashMap<RepositoryLocation, String>,
     branch: String,
     branches: Vec<Branch>,
-    repository_scroll: UniformListScrollHandle,
+    repository_scroll: ScrollHandle,
+    collapsed_repository_groups: [bool; 2],
     branch_scroll: UniformListScrollHandle,
     view: View,
     working: ChangeState,
@@ -402,16 +410,31 @@ pub struct Patchlook {
     loading: bool,
     error: Option<String>,
     load_task: Option<Task<()>>,
+    host_verification: crate::ssh_host::HostVerification,
     _subscriptions: Vec<Subscription>,
     focus: FocusHandle,
 }
 
 impl Patchlook {
-    pub fn new(initial: Option<PathBuf>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        initial: Option<RepositoryLocation>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let (preferences, error) = match Preferences::read() {
             Ok(preferences) => (preferences, None),
             Err(error) => (Preferences::default(), Some(format!("{error:#}"))),
         };
+        Self::from_preferences(initial, preferences, error, window, cx)
+    }
+
+    fn from_preferences(
+        initial: Option<RepositoryLocation>,
+        preferences: Preferences,
+        error: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         apply_appearance(preferences.appearance, window, cx);
         apply_language(preferences.language, cx);
         let history_search =
@@ -443,8 +466,23 @@ impl Patchlook {
                 }
             }),
         ];
-        let initial = initial.or_else(|| preferences.repository.clone());
-        let mut app = Self {
+        let saved_remote = preferences
+            .repository
+            .as_ref()
+            .filter(|path| initial.is_none() && path.is_remote())
+            .cloned();
+        let initial = initial.or_else(|| {
+            preferences
+                .repository
+                .clone()
+                .filter(|path| !path.is_remote())
+        });
+        let view = if saved_remote.is_some() {
+            View::Repositories
+        } else {
+            View::Working
+        };
+        let app = Self {
             access_mode: AccessMode::default(),
             write_task: None,
             write_history: WriteHistory::default(),
@@ -452,15 +490,21 @@ impl Patchlook {
             history: HistoryState::new(preferences.layout, cx),
             preferences,
             about: cx.new(crate::about::AboutPanel::new),
+            host_verification: crate::ssh_host::HostVerification::new(window, cx),
             external_files: Vec::new(),
             #[cfg(test)]
             preferences_directory: tempfile::tempdir().unwrap(),
             repository: None,
+            remote_sessions: HashMap::new(),
+            selected_repository: saved_remote,
+            pending_connection: None,
+            remote_errors: HashMap::new(),
             branch: String::new(),
             branches: vec![],
-            repository_scroll: UniformListScrollHandle::new(),
+            repository_scroll: ScrollHandle::new(),
+            collapsed_repository_groups: [false; 2],
             branch_scroll: UniformListScrollHandle::new(),
-            view: View::Working,
+            view,
             repository_preview: false,
 
             history_search,
@@ -476,7 +520,10 @@ impl Patchlook {
         };
         window.focus(&app.focus, cx);
         if let Some(path) = initial {
-            app.load(path, cx);
+            // The Kit root (and its dialog layer) is installed after this constructor returns.
+            cx.defer_in(window, move |this, window, cx| {
+                this.open_saved_repository(path, window, cx);
+            });
         }
         app
     }
@@ -498,14 +545,17 @@ impl Patchlook {
     }
 
     fn set_access_mode(&mut self, mode: AccessMode, cx: &mut Context<Self>) {
-        if self.write_task.is_none() {
+        if self.write_task.is_none() && !self.repository.as_ref().is_some_and(Repository::is_remote)
+        {
             self.access_mode = mode;
             cx.notify();
         }
     }
 
     fn staging_visible(&self) -> bool {
-        self.access_mode == AccessMode::ReadWrite && self.view == View::Working
+        self.access_mode == AccessMode::ReadWrite
+            && self.view == View::Working
+            && !self.repository.as_ref().is_some_and(Repository::is_remote)
     }
 
     fn staging_disabled(&self) -> bool {
@@ -848,7 +898,7 @@ impl Patchlook {
         let Some(patch) = self.working.staging_patch.clone() else {
             return;
         };
-        let root = self.repository.as_ref().map(|repo| repo.root.clone());
+        let root = self.repository.as_ref().map(|repo| repo.location.clone());
         let app = cx.entity().downgrade();
         window.open_alert_dialog(cx, move |dialog, _, _| {
             let app = app.clone();
@@ -868,7 +918,7 @@ impl Patchlook {
                 .cancel_text(tr("keep_changes"))
                 .on_ok(move |_, _, cx| {
                     let _ = app.update(cx, |this, cx| {
-                        if this.repository.as_ref().map(|repo| &repo.root) == root.as_ref() {
+                        if this.repository.as_ref().map(|repo| &repo.location) == root.as_ref() {
                             this.write_change(
                                 change.clone(),
                                 ChangeOperation::DiscardBlock(block),
@@ -904,6 +954,173 @@ impl Patchlook {
             _ => {}
         })
         .detach();
+    }
+
+    fn repository_menu(
+        &self,
+        id: &'static str,
+        icon: IconName,
+        compact: bool,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        let app = cx.entity().downgrade();
+        let local = app.clone();
+        let tooltip = self
+            .repository
+            .as_ref()
+            .map(|repo| format!("{}\n{}", tr("open_repository"), repo.location))
+            .unwrap_or_else(|| tr("open_repository").to_owned());
+        div().occlude().child(
+            icon_button(id, icon, "open_repository")
+                .when(compact, |b| b.xsmall())
+                .text_color(cx.theme().muted_foreground)
+                .tooltip(tooltip)
+                .disabled(self.write_task.is_some())
+                .dropdown_menu_with_anchor(Anchor::TopLeft, move |menu, _, _| {
+                    let local = local.clone();
+                    let remote = app.clone();
+                    menu.item(
+                        PopupMenuItem::new(tr("open_repository"))
+                            .icon(IconName::FolderOpen)
+                            .on_click(move |_, window, cx| {
+                                let _ = local.update(cx, |this, cx| {
+                                    this.open_repository(&OpenRepository, window, cx)
+                                });
+                            }),
+                    )
+                    .item(
+                        PopupMenuItem::new(tr("connect_ssh"))
+                            .icon(IconName::Server)
+                            .on_click(move |_, window, cx| {
+                                let _ = remote.update(cx, |this, cx| {
+                                    this.open_remote_repository(window, cx);
+                                });
+                            }),
+                    )
+                }),
+        )
+    }
+
+    fn open_remote_repository(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<crate::remote_repository::RemoteRepositoryForm> {
+        self.remote_repository_dialog(None, window, cx)
+    }
+
+    fn open_saved_repository(
+        &mut self,
+        path: RepositoryLocation,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.write_task.is_some() {
+            return;
+        }
+        if self.selected_repository.as_ref() != Some(&path) {
+            self.cancel_repository_load();
+        }
+        self.selected_repository = Some(path.clone());
+        cx.notify();
+        if self
+            .pending_connection
+            .as_ref()
+            .is_some_and(|(target, _)| *target == path)
+        {
+            return;
+        }
+        if self
+            .repository
+            .as_ref()
+            .is_some_and(|repo| repo.location == path)
+        {
+            return;
+        }
+        if !self.remote_sessions.contains_key(&path)
+            && matches!(&path, RepositoryLocation::Ssh { options, .. } if options.authentication.requires_secret())
+        {
+            self.remote_repository_dialog(Some(path), window, cx);
+        } else {
+            self.load(path, cx);
+        }
+    }
+
+    fn remote_repository_dialog(
+        &mut self,
+        target: Option<RepositoryLocation>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<crate::remote_repository::RemoteRepositoryForm> {
+        let history = self.preferences.ssh_input_history.clone();
+        let app = cx.entity().downgrade();
+        let form = cx.new(|cx| {
+            let mut form = crate::remote_repository::RemoteRepositoryForm::new(
+                history,
+                move |field, value, cx| {
+                    let _ = app.update(cx, |this, cx| {
+                        this.preferences.ssh_input_history.remove(field, value);
+                        this.save_preferences();
+                        cx.notify();
+                    });
+                },
+                window,
+                cx,
+            );
+            if let Some(target) = &target {
+                form.prefill(target, window, cx);
+            }
+            form
+        });
+        let form_view = form.clone();
+        let app = cx.entity().downgrade();
+        let initial_focus = std::cell::Cell::new(true);
+        window.open_dialog(cx, move |dialog, window, cx| {
+            if initial_focus.replace(false) {
+                form_view.read(cx).host.focus_handle(cx).focus(window, cx);
+            }
+            let form = form_view.clone();
+            let app = app.clone();
+            let can_connect = form_view.read(cx).can_connect(cx);
+            dialog
+                .title(tr("connect_ssh"))
+                .w(px(500.))
+                .child(form_view.clone())
+                .footer(
+                    DialogFooter::new()
+                        .child(
+                            DialogClose::new()
+                                .child(Button::new("ssh-cancel").label(tr("cancel")).outline()),
+                        )
+                        .child(
+                            DialogAction::new().child(
+                                Button::new("ssh-connect")
+                                    .label(tr("connect"))
+                                    .primary()
+                                    .disabled(!can_connect),
+                            ),
+                        ),
+                )
+                .on_ok(move |_, _, cx| match form.read(cx).connection(cx) {
+                    Ok((target, secret)) => {
+                        let _ = app.update(cx, |this, cx| {
+                            this.preferences.ssh_input_history.remember(&target);
+                            this.save_preferences();
+                            this.view = View::Repositories;
+                            this.load_repository(target, secret, cx);
+                        });
+                        true
+                    }
+                    Err(error) => {
+                        form.update(cx, |form, cx| {
+                            form.error = Some(error.to_string());
+                            cx.notify();
+                        });
+                        false
+                    }
+                })
+        });
+        form
     }
 
     fn files_for(&self, source: Source) -> &ChangeState {
@@ -945,7 +1162,7 @@ impl Patchlook {
     fn viewed_branch(&self) -> Option<&str> {
         self.repository
             .as_ref()
-            .and_then(|repo| self.preferences.viewed_branch(&repo.root))
+            .and_then(|repo| self.preferences.viewed_branch(&repo.location))
     }
 
     fn viewed_branch_name(&self) -> String {
@@ -970,23 +1187,38 @@ impl Patchlook {
         self.load_history_page(HistoryRequest::Branch(reference), cx);
     }
 
-    fn load(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+    fn load(&mut self, path: impl Into<RepositoryLocation>, cx: &mut Context<Self>) {
+        let path = path.into();
         if self
             .repository
             .as_ref()
-            .is_some_and(|repo| repo.root == path)
+            .is_some_and(|repo| repo.location == path)
         {
+            self.cancel_repository_load();
+            self.selected_repository = Some(path);
+            cx.notify();
             return;
         }
-        self.load_repository(path, cx);
+        self.load_repository(path, None, cx);
     }
 
     /// Opening/refreshing a repository replaces its two snapshots. Tab changes never call this.
-    fn load_repository(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+    fn load_repository(
+        &mut self,
+        path: RepositoryLocation,
+        secret: Option<patchlook::ssh_auth::SshSecret>,
+        cx: &mut Context<Self>,
+    ) {
         if self.write_task.is_some() {
             return;
         }
-        self.load_task = None;
+        self.cancel_repository_load();
+        self.selected_repository = Some(path.clone());
+        self.remote_errors.remove(&path);
+        if path.is_remote() {
+            self.preferences.add_repository(path.clone());
+            self.save_preferences();
+        }
         self.working.cancel_pending();
         self.history.files.cancel_pending();
         self.history.load_task = None;
@@ -997,10 +1229,31 @@ impl Patchlook {
         let preview = self.view != View::Repositories;
         let query = self.history.query.clone();
         let reference = self.preferences.viewed_branch(&path).map(str::to_owned);
+        let existing = self
+            .remote_sessions
+            .get(&path)
+            .filter(|_| secret.is_none())
+            .cloned();
+        let reuses_connection = existing.is_some();
+        let control = SshConnectionControl::default();
+        if path.is_remote() && existing.is_none() {
+            self.collapsed_repository_groups[1] = false;
+            self.pending_connection = Some((path.clone(), control.clone()));
+        }
+        let requested = path.clone();
+        let verification = self.host_verification.interaction(control.clone());
         self.load_task = Some(cx.spawn(async move |this, cx| {
             let result = cx
                 .background_spawn(async move {
-                    let repo = Repository::open(&path)?;
+                    let repo = match existing {
+                        Some(repo) => repo,
+                        None => Repository::open_with_control(
+                            path,
+                            secret,
+                            Some(verification?),
+                            control,
+                        )?,
+                    };
                     let branches = repo.branches()?;
                     let (branch, page, changes) = match source {
                         Source::Working => {
@@ -1027,9 +1280,19 @@ impl Patchlook {
                 .await;
             let _ = this.update(cx, |this, cx| {
                 this.loading = false;
+                this.pending_connection = None;
                 match result {
                     Ok((repo, branch, branches, page, prepared)) => {
-                        if this.repository.as_ref().map(|old| &old.root) != Some(&repo.root) {
+                        if repo.is_remote()
+                            && !reuses_connection
+                            && let Some(old) = this
+                                .remote_sessions
+                                .insert(repo.location.clone(), repo.clone())
+                        {
+                            old.disconnect();
+                        }
+                        if this.repository.as_ref().map(|old| &old.location) != Some(&repo.location)
+                        {
                             this.write_history = WriteHistory::default();
                         }
                         this.working = ChangeState::new(this.preferences.layout, cx);
@@ -1038,7 +1301,25 @@ impl Patchlook {
                         this.history.query = query;
                         this.repository_preview = false;
                         this.reset_copy_feedback();
-                        this.preferences.remember_repository(repo.root.clone());
+                        let requested_branch = this
+                            .preferences
+                            .viewed_branch(&requested)
+                            .map(str::to_owned);
+                        if requested != repo.location {
+                            this.preferences
+                                .recent_repositories
+                                .retain(|entry| entry.path != requested);
+                        }
+                        this.preferences.remember_repository(repo.location.clone());
+                        if requested != repo.location && requested_branch.is_some() {
+                            this.preferences
+                                .set_viewed_branch(&repo.location, requested_branch);
+                        }
+                        this.remote_errors.remove(&repo.location);
+                        this.selected_repository = Some(repo.location.clone());
+                        if repo.is_remote() {
+                            this.access_mode = AccessMode::ReadOnly;
+                        }
                         this.repository = Some(repo);
                         this.branch = branch;
                         this.branches = branches;
@@ -1054,7 +1335,13 @@ impl Patchlook {
                         }
                         this.apply_changes(source, prepared, cx);
                     }
-                    Err(error) => this.error = Some(format!("{}: {error:#}", tr("load_failed"))),
+                    Err(error) => {
+                        let error = format!("{}: {error:#}", tr("load_failed"));
+                        if requested.is_remote() {
+                            this.remote_errors.insert(requested, error.clone());
+                        }
+                        this.error = Some(error);
+                    }
                 }
                 cx.notify();
             });
@@ -1064,32 +1351,77 @@ impl Patchlook {
 
     pub fn refresh(&mut self, _: &Refresh, _: &mut Window, cx: &mut Context<Self>) {
         if let Some(repo) = &self.repository {
-            self.load_repository(repo.root.clone(), cx);
+            self.load_repository(repo.location.clone(), None, cx);
         }
     }
 
-    fn remove_repository(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.loading || self.write_task.is_some() {
+    fn disconnect_repository(
+        &mut self,
+        path: &RepositoryLocation,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !path.is_remote() || self.write_task.is_some() {
             return;
         }
-        let Some(index) = self.repository.as_ref().and_then(|repo| {
-            self.preferences
-                .recent_repositories
-                .iter()
-                .position(|entry| entry.path == repo.root)
-        }) else {
+        if self.loading
+            && !self
+                .pending_connection
+                .as_ref()
+                .is_some_and(|(target, _)| target == path)
+        {
             return;
-        };
-        self.preferences.recent_repositories.remove(index);
-        self.preferences.repository = None;
-        let next = self
-            .preferences
-            .recent_repositories
-            .get(index)
-            .or_else(|| self.preferences.recent_repositories.last())
-            .map(|entry| entry.path.clone());
+        }
+        if self
+            .pending_connection
+            .as_ref()
+            .is_some_and(|(target, _)| target == path)
+        {
+            self.cancel_repository_load();
+        }
+        if let Some(repo) = self.remote_sessions.remove(path) {
+            repo.disconnect();
+        }
+        if self
+            .repository
+            .as_ref()
+            .is_some_and(|repo| &repo.location == path)
+        {
+            self.clear_repository(window, cx);
+            if self.preferences.repository.as_ref() == Some(path) {
+                self.preferences.repository = None;
+                self.save_preferences();
+            }
+        }
+        self.remote_errors.remove(path);
+        self.error = None;
+        cx.notify();
+    }
 
+    fn reconnect_repository(
+        &mut self,
+        path: RepositoryLocation,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.write_task.is_some() {
+            return;
+        }
+        self.cancel_repository_load();
+        self.disconnect_repository(&path, window, cx);
+        self.open_saved_repository(path, window, cx);
+    }
+
+    fn cancel_repository_load(&mut self) {
+        if let Some((_, control)) = self.pending_connection.take() {
+            control.disconnect();
+        }
         self.load_task = None;
+        self.loading = false;
+    }
+
+    fn clear_repository(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.cancel_repository_load();
         self.repository = None;
         self.write_history = WriteHistory::default();
         self.branch.clear();
@@ -1102,9 +1434,46 @@ impl Patchlook {
         self.error = None;
         self.history_search
             .update(cx, |input, cx| input.set_value("", window, cx));
+    }
+
+    fn remove_repository(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.loading || self.write_task.is_some() {
+            return;
+        }
+        let Some(index) = self.selected_repository.as_ref().and_then(|path| {
+            self.preferences
+                .recent_repositories
+                .iter()
+                .position(|entry| &entry.path == path)
+        }) else {
+            return;
+        };
+        let removed = self.preferences.recent_repositories.remove(index).path;
+        if let Some(repo) = self.remote_sessions.remove(&removed) {
+            repo.disconnect();
+        }
+        self.remote_errors.remove(&removed);
+        if self.preferences.repository.as_ref() == Some(&removed) {
+            self.preferences.repository = None;
+        }
+        let next = self
+            .preferences
+            .recent_repositories
+            .get(index)
+            .or_else(|| self.preferences.recent_repositories.last())
+            .map(|entry| entry.path.clone());
+
+        if self
+            .repository
+            .as_ref()
+            .is_some_and(|repo| repo.location == removed)
+        {
+            self.clear_repository(window, cx);
+        }
+        self.selected_repository = next.clone();
         self.save_preferences();
         if let Some(path) = next {
-            self.load(path, cx);
+            self.open_saved_repository(path, window, cx);
         }
         cx.notify();
     }
@@ -1259,8 +1628,11 @@ impl Patchlook {
                         if let Some(reference) = branch {
                             let repo = this.repository.as_ref().unwrap();
                             // Lazy first entry and Tab changes do not rewrite preferences.
-                            if this.preferences.viewed_branch(&repo.root) != reference.as_deref() {
-                                this.preferences.set_viewed_branch(&repo.root, reference);
+                            if this.preferences.viewed_branch(&repo.location)
+                                != reference.as_deref()
+                            {
+                                this.preferences
+                                    .set_viewed_branch(&repo.location, reference);
                                 this.save_preferences();
                             }
                         }
@@ -1727,6 +2099,12 @@ fn icon_button(id: &'static str, icon: IconName, label: &'static str) -> Button 
         .accessibility_label(tr(label))
 }
 
+fn list_action_style(cx: &App) -> ButtonCustomVariant {
+    ButtonCustomVariant::new(cx)
+        .hover(cx.theme().foreground.opacity(0.12))
+        .active(cx.theme().foreground.opacity(0.18))
+}
+
 fn application_menu_item(
     name: impl Into<SharedString>,
     icon: Option<ApplicationIcon>,
@@ -1766,7 +2144,7 @@ fn toolbar_divider(cx: &App) -> Div {
         .bg(cx.theme().border)
 }
 
-fn list_scrollbar(id: &'static str, handle: &UniformListScrollHandle) -> Div {
+fn list_scrollbar(id: &'static str, handle: &(impl ScrollbarHandle + Clone)) -> Div {
     div().absolute().inset_0().child(
         Scrollbar::vertical(handle)
             .id(id)
@@ -1785,8 +2163,11 @@ fn list_scrollbar(id: &'static str, handle: &UniformListScrollHandle) -> Div {
 impl Patchlook {
     fn access_mode_control(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let read_only = self.access_mode == AccessMode::ReadOnly;
-        let busy = self.write_task.is_some();
-        let mode_label = if read_only {
+        let remote = self.repository.as_ref().is_some_and(Repository::is_remote);
+        let busy = self.write_task.is_some() || remote;
+        let mode_label = if remote {
+            "ssh_read_only"
+        } else if read_only {
             "read_only_mode"
         } else {
             "read_write_mode"
@@ -1891,6 +2272,9 @@ impl Patchlook {
     }
 
     fn external_file_target(&self) -> Option<FileToOpen> {
+        if self.repository.as_ref()?.is_remote() {
+            return None;
+        }
         let files = self.active_files();
         if self.loading
             || files.files_loading
@@ -2030,13 +2414,12 @@ impl Patchlook {
         })
         .replace("{branch}", &branch)
         .replace("{worktree}", &self.branch);
-        let repository_name = self.repository.as_ref().map(|repo| {
-            repo.root
-                .file_name()
-                .unwrap_or(repo.root.as_os_str())
-                .to_string_lossy()
-                .into_owned()
-        });
+        let repository_name = self.repository.as_ref().map(|repo| repo.location.name());
+        let repository_icon = if self.repository.as_ref().is_some_and(Repository::is_remote) {
+            IconName::Server
+        } else {
+            IconName::FolderOpen
+        };
         // Controls must hide the underlying Drag hitbox from Windows' native
         // hit testing, which runs before ordinary mouse/click event handlers.
         TitleBar::new().bg(cx.theme().title_bar).child(
@@ -2049,25 +2432,7 @@ impl Patchlook {
                     cfg!(any(target_os = "windows", target_os = "linux")),
                     |bar| bar.child(self.application_menu(cx)),
                 )
-                .child(
-                    Button::new("open-repository")
-                        .occlude()
-                        .icon(IconName::FolderOpen)
-                        .small()
-                        .ghost()
-                        .tooltip(
-                            self.repository
-                                .as_ref()
-                                .map(|repo| {
-                                    format!("{}\n{}", tr("open_repository"), repo.root.display())
-                                })
-                                .unwrap_or_else(|| tr("open_repository").to_owned()),
-                        )
-                        .accessibility_label(tr("open_repository"))
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.open_repository(&OpenRepository, window, cx)
-                        })),
-                )
+                .child(self.repository_menu("open-repository", repository_icon, false, cx))
                 .child(
                     div()
                         .max_w(px(180.))
@@ -2134,6 +2499,17 @@ impl Patchlook {
     }
 
     fn repositories(&self, cx: &mut Context<Self>) -> AnyElement {
+        let has_remote = self
+            .preferences
+            .recent_repositories
+            .iter()
+            .any(|entry| entry.path.is_remote());
+        let has_local = self
+            .preferences
+            .recent_repositories
+            .iter()
+            .any(|entry| !entry.path.is_remote());
+        let show_groups = has_local && has_remote;
         v_flex()
             .size_full()
             .min_h_0()
@@ -2149,21 +2525,16 @@ impl Patchlook {
                     .child(tr("recent_repositories"))
                     .child(self.preferences.recent_repositories.len().to_string())
                     .child(div().flex_1())
-                    .child(
-                        icon_button("add-repository", IconName::Plus, "open_repository")
-                            .xsmall()
-                            .text_color(cx.theme().muted_foreground)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.open_repository(&OpenRepository, window, cx)
-                            })),
-                    )
+                    .child(self.repository_menu("add-repository", IconName::Plus, true, cx))
                     .child(
                         icon_button("remove-repository", IconName::Minus, "remove_repository")
                             .xsmall()
-                            .when(self.repository.is_some() && !self.loading, |button| {
-                                button.text_color(cx.theme().muted_foreground)
-                            })
-                            .disabled(self.repository.is_none() || self.loading)
+                            .text_color(cx.theme().muted_foreground)
+                            .disabled(
+                                self.selected_repository.is_none()
+                                    || self.loading
+                                    || self.write_task.is_some(),
+                            )
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.remove_repository(window, cx)
                             })),
@@ -2175,17 +2546,84 @@ impl Patchlook {
                     .flex_1()
                     .min_h_0()
                     .child(
-                        uniform_list(
-                            "repositories-list",
-                            self.preferences.recent_repositories.len(),
-                            cx.processor(|this, range: std::ops::Range<usize>, _, cx| {
-                                range
-                                    .map(|index| this.repository_row(index, cx))
-                                    .collect::<Vec<_>>()
-                            }),
-                        )
-                        .track_scroll(&self.repository_scroll)
-                        .size_full(),
+                        v_flex()
+                            .id("repositories-list")
+                            .size_full()
+                            .overflow_y_scroll()
+                            .track_scroll(&self.repository_scroll)
+                            .children([false, true].into_iter().filter_map(|remote| {
+                                let entries: Vec<_> = self
+                                    .preferences
+                                    .recent_repositories
+                                    .iter()
+                                    .enumerate()
+                                    .filter(|(_, entry)| entry.path.is_remote() == remote)
+                                    .map(|(index, _)| index)
+                                    .collect();
+                                if entries.is_empty() {
+                                    return None;
+                                }
+                                let group = usize::from(remote);
+                                let expanded = !self.collapsed_repository_groups[group];
+                                let title = tr(if remote {
+                                    "remote_repositories"
+                                } else {
+                                    "local_repositories"
+                                });
+                                Some(
+                                    v_flex()
+                                        .flex_none()
+                                        .when(show_groups, |section| {
+                                            section.child(
+                                                Button::new(if remote {
+                                                    "remote-repositories"
+                                                } else {
+                                                    "local-repositories"
+                                                })
+                                                .custom(
+                                                    ButtonCustomVariant::new(cx)
+                                                        .hover(cx.theme().list_hover),
+                                                )
+                                                .toggled(expanded)
+                                                .accessibility_label(title)
+                                                .w_full()
+                                                .h(px(28.))
+                                                .px_3()
+                                                .justify_start()
+                                                .text_color(cx.theme().muted_foreground)
+                                                .child(
+                                                    h_flex()
+                                                        .w_full()
+                                                        .justify_start()
+                                                        .gap_2()
+                                                        .text_xs()
+                                                        .child(title)
+                                                        .child(entries.len().to_string())
+                                                        .child(
+                                                            Icon::new(if expanded {
+                                                                IconName::ChevronDown
+                                                            } else {
+                                                                IconName::ChevronRight
+                                                            })
+                                                            .xsmall(),
+                                                        ),
+                                                )
+                                                .on_click(cx.listener(move |this, _, _, cx| {
+                                                    this.collapsed_repository_groups[group] =
+                                                        !this.collapsed_repository_groups[group];
+                                                    cx.notify();
+                                                })),
+                                            )
+                                        })
+                                        .when(!show_groups || expanded, |section| {
+                                            section.children(
+                                                entries
+                                                    .into_iter()
+                                                    .map(|index| self.repository_row(index, cx)),
+                                            )
+                                        }),
+                                )
+                            })),
                     )
                     .child(list_scrollbar(
                         "repositories-scrollbar",
@@ -2195,56 +2633,176 @@ impl Patchlook {
             .into_any_element()
     }
 
+    fn remote_status(&self, path: &RepositoryLocation) -> &'static str {
+        if self
+            .pending_connection
+            .as_ref()
+            .is_some_and(|(target, _)| target == path)
+        {
+            "ssh_connecting"
+        } else if self.remote_errors.contains_key(path) {
+            "ssh_connection_failed"
+        } else if self.remote_sessions.contains_key(path) {
+            "ssh_connected"
+        } else {
+            "ssh_disconnected"
+        }
+    }
+
     fn repository_row(&self, index: usize, cx: &mut Context<Self>) -> Div {
         let path = self.preferences.recent_repositories[index].path.clone();
-        let name = path
-            .file_name()
-            .unwrap_or(path.as_os_str())
-            .to_string_lossy()
-            .into_owned();
-        let selected = self
-            .repository
-            .as_ref()
-            .is_some_and(|repo| repo.root == path);
-        div().h(px(50.)).px_2().pb_1().child(
-            Button::new(("repository", index))
-                .custom(
-                    ButtonCustomVariant::new(cx)
-                        .hover(cx.theme().list_hover)
-                        .active(cx.theme().secondary_active),
-                )
-                .w_full()
-                .h_full()
-                .justify_start()
-                .selected(selected)
-                .tooltip(path.display().to_string())
-                .accessibility_label(path.display().to_string())
+        let selected = self.selected_repository.as_ref() == Some(&path);
+        let remote = path.is_remote();
+        let group = SharedString::from(format!("repository-row-{index}"));
+        let row_path = path.clone();
+        let status = self.remote_status(&path);
+        let tooltip = self
+            .remote_errors
+            .get(&path)
+            .map(|error| format!("{path}\n{error}"))
+            .unwrap_or_else(|| path.to_string());
+        div().h(px(50.)).flex_none().px_2().pb_1().child(
+            h_flex()
+                .group(group.clone())
+                .size_full()
+                .rounded_md()
+                .when(selected, |row| row.bg(cx.theme().secondary_active))
+                .hover(|row| {
+                    row.bg(if selected {
+                        cx.theme().secondary_active
+                    } else {
+                        cx.theme().list_hover
+                    })
+                })
                 .child(
-                    h_flex()
-                        .gap_2()
-                        .w_full()
+                    Button::new(("repository", index))
+                        .custom(ButtonCustomVariant::new(cx))
+                        .flex_1()
                         .min_w_0()
+                        .h_full()
+                        .justify_start()
+                        .tooltip(tooltip)
+                        .accessibility_label(path.to_string())
+                        .disabled(self.write_task.is_some())
                         .child(
-                            Icon::new(IconName::Folder)
-                                .small()
-                                .text_color(cx.theme().muted_foreground),
-                        )
-                        .child(
-                            v_flex()
+                            h_flex()
+                                .gap_2()
+                                .w_full()
                                 .min_w_0()
-                                .flex_1()
-                                .items_start()
-                                .child(div().text_sm().truncate().child(name))
                                 .child(
-                                    div()
-                                        .text_xs()
-                                        .text_color(cx.theme().muted_foreground)
-                                        .truncate()
-                                        .child(path.display().to_string()),
+                                    Icon::new(if remote {
+                                        IconName::Server
+                                    } else {
+                                        IconName::Folder
+                                    })
+                                    .small()
+                                    .text_color(cx.theme().muted_foreground),
+                                )
+                                .child(
+                                    v_flex()
+                                        .min_w_0()
+                                        .flex_1()
+                                        .items_start()
+                                        .child(
+                                            h_flex()
+                                                .gap_2()
+                                                .w_full()
+                                                .min_w_0()
+                                                .child(
+                                                    div()
+                                                        .text_sm()
+                                                        .min_w_0()
+                                                        .flex_1()
+                                                        .truncate()
+                                                        .child(path.name()),
+                                                )
+                                                .when(remote, |row| {
+                                                    row.child(
+                                                        div()
+                                                            .id(("repository-status", index))
+                                                            .test_support()
+                                                            .text_xs()
+                                                            .text_color(cx.theme().muted_foreground)
+                                                            .aria_label(tr(status))
+                                                            .child(tr(status)),
+                                                    )
+                                                }),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(cx.theme().muted_foreground)
+                                                .truncate()
+                                                .child(path.to_string()),
+                                        ),
                                 ),
-                        ),
+                        )
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.open_saved_repository(row_path.clone(), window, cx)
+                        })),
                 )
-                .on_click(cx.listener(move |this, _, _, cx| this.load(path.clone(), cx))),
+                .when(remote, |row| {
+                    let disconnect = path.clone();
+                    let reconnect = path.clone();
+                    let can_disconnect = self
+                        .pending_connection
+                        .as_ref()
+                        .is_some_and(|(target, _)| target == &path)
+                        || (!self.loading && self.remote_sessions.contains_key(&path));
+                    let disconnect_app = cx.entity().downgrade();
+                    let reconnect_app = disconnect_app.clone();
+                    let busy = self.write_task.is_some();
+                    row.child(
+                        div()
+                            .flex_none()
+                            .pr_1()
+                            .invisible()
+                            .group_hover(group, |style| style.visible())
+                            .child(
+                                Button::new(("repository-more", index))
+                                    .icon(IconName::Ellipsis)
+                                    .xsmall()
+                                    .custom(list_action_style(cx))
+                                    .text_color(cx.theme().muted_foreground)
+                                    .accessibility_label(tr("repository_actions"))
+                                    .disabled(busy)
+                                    .dropdown_menu_with_anchor(
+                                        Anchor::TopRight,
+                                        move |menu, _, _| {
+                                            let target = disconnect.clone();
+                                            let app = disconnect_app.clone();
+                                            let reconnect = reconnect.clone();
+                                            let reconnect_app = reconnect_app.clone();
+                                            menu.item(
+                                                PopupMenuItem::new(tr("ssh_disconnect"))
+                                                    .disabled(!can_disconnect)
+                                                    .on_click(move |_, window, cx| {
+                                                        let _ = app.update(cx, |this, cx| {
+                                                            this.disconnect_repository(
+                                                                &target, window, cx,
+                                                            )
+                                                        });
+                                                    }),
+                                            )
+                                            .item(
+                                                PopupMenuItem::new(tr("ssh_reconnect")).on_click(
+                                                    move |_, window, cx| {
+                                                        let _ =
+                                                            reconnect_app.update(cx, |this, cx| {
+                                                                this.reconnect_repository(
+                                                                    reconnect.clone(),
+                                                                    window,
+                                                                    cx,
+                                                                )
+                                                            });
+                                                    },
+                                                ),
+                                            )
+                                        },
+                                    ),
+                            ),
+                    )
+                }),
         )
     }
 
@@ -2373,11 +2931,7 @@ impl Patchlook {
                             Button::new(("browse-branch", index))
                                 .icon(IconName::ArrowRight)
                                 .xsmall()
-                                .custom(
-                                    ButtonCustomVariant::new(cx)
-                                        .hover(cx.theme().foreground.opacity(0.12))
-                                        .active(cx.theme().foreground.opacity(0.18)),
-                                )
+                                .custom(list_action_style(cx))
                                 .disabled(self.loading)
                                 .tooltip(tr("browse_branch"))
                                 .accessibility_label(tr("browse_branch"))
@@ -3349,6 +3903,15 @@ impl Patchlook {
     }
 }
 
+impl Drop for Patchlook {
+    fn drop(&mut self) {
+        self.cancel_repository_load();
+        for repo in self.remote_sessions.values() {
+            repo.disconnect();
+        }
+    }
+}
+
 impl Render for Patchlook {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let body = if self.repository.is_none()
@@ -3386,12 +3949,24 @@ impl Render for Patchlook {
                             ),
                     )
                     .child(
-                        Button::new("welcome-open")
-                            .primary()
-                            .label(tr("open_repository"))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.open_repository(&OpenRepository, window, cx)
-                            })),
+                        h_flex()
+                            .gap_2()
+                            .child(
+                                Button::new("welcome-open")
+                                    .primary()
+                                    .label(tr("open_repository"))
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.open_repository(&OpenRepository, window, cx)
+                                    })),
+                            )
+                            .child(
+                                Button::new("welcome-ssh")
+                                    .outline()
+                                    .label(tr("connect_ssh"))
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.open_remote_repository(window, cx);
+                                    })),
+                            ),
                     )
                     .into_any_element()
             }
@@ -3754,12 +4329,18 @@ mod tests {
             history: HistoryState::new(Layout::Split, cx),
             preferences: Preferences::default(),
             about: cx.new(crate::about::AboutPanel::new),
+            host_verification: crate::ssh_host::HostVerification::new(window, cx),
             external_files: Vec::new(),
             preferences_directory: tempfile::tempdir().unwrap(),
             repository: None,
+            remote_sessions: HashMap::new(),
+            selected_repository: None,
+            pending_connection: None,
+            remote_errors: HashMap::new(),
             branch: "main".into(),
             branches: vec![],
-            repository_scroll: UniformListScrollHandle::new(),
+            repository_scroll: ScrollHandle::new(),
+            collapsed_repository_groups: [false; 2],
             branch_scroll: UniformListScrollHandle::new(),
             view: View::Working,
             repository_preview: false,
@@ -3775,6 +4356,1117 @@ mod tests {
             _subscriptions: vec![],
             focus: cx.focus_handle(),
         }
+    }
+
+    #[gpui_kit::test]
+    fn returning_to_the_current_repository_cancels_an_unfinished_switch(cx: &mut TestAppContext) {
+        cx.update(gpui_kit::init);
+        let first = tempfile::tempdir().unwrap();
+        let second = tempfile::tempdir().unwrap();
+        for directory in [&first, &second] {
+            git(directory.path(), &["init", "-b", "main"]);
+        }
+        let (handle, app) = cx.update(|cx| {
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                cx.new(|cx| {
+                    let mut app = test_app(window, cx);
+                    app.load(first.path().to_owned(), cx);
+                    app
+                })
+            })
+            .unwrap()
+        });
+        cx.run_until_parked();
+        let original = cx
+            .update_window(handle, |_, window, cx| {
+                app.update(cx, |app, cx| {
+                    assert!(app.error.is_none(), "{:?}", app.error);
+                    let original = app.repository.as_ref().unwrap().location.clone();
+                    app.load(second.path().to_owned(), cx);
+                    assert!(app.loading);
+                    app.open_saved_repository(original.clone(), window, cx);
+                    assert!(!app.loading);
+                    assert!(app.load_task.is_none());
+                    original
+                })
+            })
+            .unwrap();
+        cx.run_until_parked();
+        cx.update(|cx| {
+            let app = app.read(cx);
+            assert!(app.error.is_none(), "{:?}", app.error);
+            assert_eq!(app.repository.as_ref().unwrap().location, original);
+            assert_eq!(app.selected_repository.as_ref(), Some(&original));
+        });
+    }
+
+    #[gpui_kit::test]
+    fn repository_groups_hide_single_kind_headers_and_collapse_independently(
+        cx: &mut TestAppContext,
+    ) {
+        use patchlook::git::SshOptions;
+        cx.update(gpui_kit::init);
+        let local = RepositoryLocation::Local(PathBuf::from("alpha"));
+        let remote = RepositoryLocation::Ssh {
+            path: "/srv/beta".into(),
+            options: SshOptions {
+                host: "example".into(),
+                ..Default::default()
+            },
+        };
+        let (handle, app) = cx.update(|cx| {
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                cx.new(|cx| {
+                    let mut app = test_app(window, cx);
+                    app.view = View::Repositories;
+                    app
+                })
+            })
+            .unwrap()
+        });
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.try_find("local-repositories").is_none());
+            assert!(window.try_find("remote-repositories").is_none());
+            for path in [&local, &remote] {
+                app.update(cx, |app, cx| {
+                    app.preferences.recent_repositories.clear();
+                    app.preferences.add_repository(path.clone());
+                    cx.notify();
+                });
+                window.render_frame(cx);
+                assert!(window.try_find("local-repositories").is_none());
+                assert!(window.try_find("remote-repositories").is_none());
+                assert!(window.find(("repository", 0usize)).visible());
+            }
+            app.update(cx, |app, cx| {
+                app.preferences.add_repository(local.clone());
+                cx.notify();
+            });
+            window.render_frame(cx);
+            assert!(window.find("local-repositories").visible());
+            assert!(window.find("remote-repositories").visible());
+            window.click("local-repositories", cx);
+            window.render_frame(cx);
+            assert!(window.try_find(("repository", 0usize)).is_none());
+            assert!(window.find(("repository", 1usize)).visible());
+            window.click("remote-repositories", cx);
+            window.render_frame(cx);
+            assert!(window.try_find(("repository", 1usize)).is_none());
+            window.click("local-repositories", cx);
+            window.render_frame(cx);
+            assert!(window.find(("repository", 0usize)).visible());
+            assert!(window.try_find(("repository", 1usize)).is_none());
+            window.click("local-repositories", cx);
+            // A collapsed group must remain reachable when it becomes the only kind.
+            for path in [&local, &remote] {
+                app.update(cx, |app, cx| {
+                    app.preferences.recent_repositories.clear();
+                    app.preferences.add_repository(path.clone());
+                    cx.notify();
+                });
+                window.render_frame(cx);
+                assert!(window.try_find("local-repositories").is_none());
+                assert!(window.try_find("remote-repositories").is_none());
+                assert!(window.find(("repository", 0usize)).visible());
+            }
+            assert!(app.read(cx).load_task.is_none());
+            assert!(!app.read(cx).loading);
+        })
+        .unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn remote_repository_rows_show_pending_failure_and_connection_actions(cx: &mut TestAppContext) {
+        use patchlook::git::{SshAuthentication, SshOptions};
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            cx.set_reduce_motion(true);
+        });
+        let directory = tempfile::tempdir().unwrap();
+        git(directory.path(), &["init", "-b", "main"]);
+        let local = Repository::open(directory.path()).unwrap();
+        let remote = RepositoryLocation::Ssh {
+            path: "/srv/demo".into(),
+            options: SshOptions {
+                host: "server.example".into(),
+                authentication: SshAuthentication::Password,
+                ..Default::default()
+            },
+        };
+        let (handle, app) = cx.update(|cx| {
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                cx.new(|cx| {
+                    let mut app = test_app(window, cx);
+                    app.preferences.remember_repository(local.location.clone());
+                    app.repository = Some(local.clone());
+                    app.selected_repository = Some(local.location.clone());
+                    app.view = View::Repositories;
+                    app.collapsed_repository_groups[1] = true;
+                    app
+                })
+            })
+            .unwrap()
+        });
+        cx.update_window(handle, |_, window, cx| {
+            app.update(cx, |app, cx| app.load_repository(remote.clone(), None, cx));
+            assert!(app.read(cx).loading);
+            assert_eq!(app.read(cx).preferences.recent_repositories.len(), 2);
+            window.render_frame(cx);
+            window.render_frame(cx);
+            let remote_index = app
+                .read(cx)
+                .preferences
+                .recent_repositories
+                .iter()
+                .position(|e| e.path == remote)
+                .unwrap();
+            let local_index = 1 - remote_index;
+            assert!(
+                window.find("local-repositories").bounds().top()
+                    < window.find(("repository", local_index)).bounds().top()
+            );
+            assert!(
+                window.find(("repository", local_index)).bounds().bottom()
+                    <= window.find("remote-repositories").bounds().top()
+            );
+            assert!(
+                window.find("remote-repositories").bounds().bottom()
+                    <= window.find(("repository", remote_index)).bounds().top()
+            );
+            assert_eq!(
+                window.find(("repository-status", remote_index)).label(),
+                Some(tr("ssh_connecting"))
+            );
+            let control = app.read(cx).pending_connection.as_ref().unwrap().1.clone();
+            window.hover(("repository", remote_index), cx);
+            window.click(("repository-more", remote_index), cx);
+            window.render_frame(cx);
+            window.render_frame(cx);
+            let action = window
+                .find_by_label(tr("ssh_disconnect"))
+                .path()
+                .last()
+                .unwrap()
+                .clone();
+            window.click(action, cx);
+            assert!(control.is_disconnected());
+            assert!(!app.read(cx).loading);
+            assert_eq!(app.read(cx).remote_status(&remote), "ssh_disconnected");
+            assert_eq!(
+                app.read(cx).repository.as_ref().unwrap().location,
+                local.location
+            );
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, _, cx| {
+            assert!(app.read(cx).error.is_none());
+            // Missing credentials fail before launching SSH; no network is used by this test.
+            app.update(cx, |app, cx| app.load_repository(remote.clone(), None, cx));
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            assert!(!app.read(cx).loading);
+            assert_eq!(app.read(cx).remote_status(&remote), "ssh_connection_failed");
+            assert_eq!(app.read(cx).preferences.recent_repositories.len(), 2);
+            assert_eq!(
+                app.read(cx).repository.as_ref().unwrap().location,
+                local.location
+            );
+            window.render_frame(cx);
+            let index = app
+                .read(cx)
+                .preferences
+                .recent_repositories
+                .iter()
+                .position(|e| e.path == remote)
+                .unwrap();
+            window.hover(("repository", index), cx);
+            window.click(("repository-more", index), cx);
+            window.render_frame(cx);
+            window.render_frame(cx);
+            let action = window
+                .find_by_label(tr("ssh_reconnect"))
+                .path()
+                .last()
+                .unwrap()
+                .clone();
+            window.click(action, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.render_frame(cx);
+            assert!(window.find("ssh-form").visible());
+            assert_eq!(window.find("ssh-connect").disabled(), Some(true));
+            window.click("ssh-cancel", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click("remove-repository", cx);
+            assert_eq!(app.read(cx).preferences.recent_repositories.len(), 1);
+            assert_eq!(
+                app.read(cx).repository.as_ref().unwrap().location,
+                local.location
+            );
+        })
+        .unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn startup_keeps_saved_ssh_repositories_disconnected(cx: &mut TestAppContext) {
+        use patchlook::git::{SshAuthentication, SshOptions};
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            cx.set_reduce_motion(true);
+        });
+        for authentication in [
+            SshAuthentication::Password,
+            SshAuthentication::KeyWithPassphrase,
+            SshAuthentication::Key,
+        ] {
+            let saved = RepositoryLocation::Ssh {
+                path: "/srv/saved".into(),
+                options: SshOptions {
+                    host: "saved.example".into(),
+                    authentication,
+                    ..Default::default()
+                },
+            };
+            let (handle, app) = cx.update(|cx| {
+                gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                    cx.new(|cx| {
+                        let mut preferences = Preferences::default();
+                        preferences.remember_repository(saved.clone());
+                        Patchlook::from_preferences(None, preferences, None, window, cx)
+                    })
+                })
+                .unwrap()
+            });
+            cx.run_until_parked();
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                window.render_frame(cx);
+                let state = app.read(cx);
+                assert!(state.view == View::Repositories);
+                assert_eq!(state.selected_repository.as_ref(), Some(&saved));
+                assert_eq!(state.preferences.recent_repositories.len(), 1);
+                assert!(state.repository.is_none());
+                assert!(state.load_task.is_none());
+                assert!(state.pending_connection.is_none());
+                assert!(!state.loading);
+                assert!(state.error.is_none());
+                assert!(window.try_find("ssh-form").is_none());
+                assert!(window.try_find("ssh-host-verification").is_none());
+                assert_eq!(
+                    window.find(("repository-status", 0usize)).label(),
+                    Some(tr("ssh_disconnected"))
+                );
+                if authentication.requires_secret() {
+                    window.click(("repository", 0usize), cx);
+                    window.render_frame(cx);
+                    window.render_frame(cx);
+                    assert!(window.find("ssh-form").visible());
+                    window.click("ssh-cancel", cx);
+                }
+                window.remove_window();
+            })
+            .unwrap();
+        }
+    }
+
+    #[gpui_kit::test]
+    fn startup_explicit_ssh_target_opens_after_the_window_root_is_ready(cx: &mut TestAppContext) {
+        use patchlook::git::{SshAuthentication, SshOptions};
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            cx.set_reduce_motion(true);
+        });
+        for authentication in [
+            SshAuthentication::Password,
+            SshAuthentication::KeyWithPassphrase,
+        ] {
+            let explicit = RepositoryLocation::Ssh {
+                path: "/srv/explicit".into(),
+                options: SshOptions {
+                    host: "explicit.example".into(),
+                    authentication,
+                    ..Default::default()
+                },
+            };
+            let (handle, app) = cx.update(|cx| {
+                gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                    cx.new(|cx| {
+                        Patchlook::from_preferences(
+                            Some(explicit.clone()),
+                            Preferences {
+                                repository: Some(PathBuf::from("unused-local-path").into()),
+                                ..Preferences::default()
+                            },
+                            None,
+                            window,
+                            cx,
+                        )
+                    })
+                })
+                .unwrap()
+            });
+            cx.run_until_parked();
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                window.render_frame(cx);
+                assert!(window.find("ssh-form").visible());
+                assert_eq!(app.read(cx).selected_repository.as_ref(), Some(&explicit));
+                assert!(!app.read(cx).loading);
+                assert!(app.read(cx).repository.is_none());
+                assert!(app.read(cx).error.is_none());
+                window.click("ssh-cancel", cx);
+                window.remove_window();
+            })
+            .unwrap();
+        }
+    }
+
+    #[gpui_kit::test]
+    fn startup_still_restores_local_repositories_and_honors_explicit_paths(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(gpui_kit::init);
+        let directory = tempfile::tempdir().unwrap();
+        let paths = ["saved", "explicit"].map(|name| {
+            let path = directory.path().join(name);
+            std::fs::create_dir(&path).unwrap();
+            git(&path, &["init", "-b", "main"]);
+            Repository::open(&path).unwrap().location
+        });
+        for initial in [None, Some(paths[1].clone())] {
+            let expected = initial.as_ref().unwrap_or(&paths[0]).clone();
+            let (handle, app) = cx.update(|cx| {
+                gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                    cx.new(|cx| {
+                        Patchlook::from_preferences(
+                            initial,
+                            Preferences {
+                                repository: Some(paths[0].clone()),
+                                ..Preferences::default()
+                            },
+                            None,
+                            window,
+                            cx,
+                        )
+                    })
+                })
+                .unwrap()
+            });
+            cx.run_until_parked();
+            cx.update_window(handle, |_, window, cx| {
+                assert_eq!(app.read(cx).repository.as_ref().unwrap().location, expected);
+                assert!(app.read(cx).working.loaded);
+                assert!(app.read(cx).error.is_none());
+                window.render_frame(cx);
+                assert!(window.try_find("ssh-form").is_none());
+                window.remove_window();
+            })
+            .unwrap();
+        }
+    }
+
+    #[gpui_kit::test]
+    fn ssh_input_history_filters_selects_and_removes_without_changing_the_input(
+        cx: &mut TestAppContext,
+    ) {
+        use patchlook::{git::SshOptions, preferences::SshHistoryField};
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            cx.set_reduce_motion(true);
+        });
+        let (handle, app) = cx.update(|cx| {
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                cx.new(|cx| test_app(window, cx))
+            })
+            .unwrap()
+        });
+        cx.update_window(handle, |_, window, _| window.activate_window())
+            .unwrap();
+        cx.run_until_parked();
+        let form = cx
+            .update_window(handle, |_, window, cx| {
+                app.update(cx, |app, cx| {
+                    for host in ["alpha.example", "beta.example"] {
+                        let target = RepositoryLocation::Ssh {
+                            path: "/srv/demo".into(),
+                            options: SshOptions {
+                                host: host.into(),
+                                port: Some(2222),
+                                username: Some("review".into()),
+                                ..Default::default()
+                            },
+                        };
+                        app.preferences.ssh_input_history.remember(&target);
+                    }
+                    app.save_preferences();
+                    app.open_remote_repository(window, cx)
+                })
+            })
+            .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.render_frame(cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(
+                form.read(cx).host.focus_handle(cx).is_focused(window),
+                "host should initially have focus"
+            );
+            let menu = window.find("ssh-history-menu").bounds();
+            let input = window.find("ssh-host").bounds();
+            assert!(menu.top() >= input.bottom());
+            assert!(menu.size.width > px(100.));
+            assert!(window.find(("ssh-history-value", 1usize)).visible());
+            window.input("alpha", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.draw(cx).clear(cx);
+            assert!(window.try_find(("ssh-history-value", 1usize)).is_none());
+            window.press("down", cx);
+            window.press("enter", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.draw(cx).clear(cx);
+            assert_eq!(
+                form.read(cx).host.read(cx).value().as_str(),
+                "alpha.example"
+            );
+            assert!(window.try_find("ssh-history-menu").is_none());
+            assert!(!app.read(cx).loading);
+            window.click(("input", form.read(cx).host.entity_id()), cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click(("ssh-history-remove", 0usize), cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.draw(cx).clear(cx);
+            assert_eq!(
+                form.read(cx).host.read(cx).value().as_str(),
+                "alpha.example"
+            );
+            assert!(window.try_find("ssh-history-menu").is_none());
+            let app = app.read(cx);
+            assert_eq!(
+                app.preferences
+                    .ssh_input_history
+                    .values(SshHistoryField::Host),
+                &["beta.example"]
+            );
+            let persisted: Preferences = serde_json::from_slice(
+                &std::fs::read(app.preferences_directory.path().join("preferences.json")).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(
+                persisted.ssh_input_history.values(SshHistoryField::Host),
+                &["beta.example"]
+            );
+            window.press(
+                if cfg!(target_os = "macos") {
+                    "cmd-a"
+                } else {
+                    "ctrl-a"
+                },
+                cx,
+            );
+            window.press("backspace", cx);
+            assert!(form.read(cx).host.read(cx).value().is_empty());
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(form.read(cx).host.focus_handle(cx).is_focused(window));
+            assert!(window.find("ssh-history-menu").visible());
+            window.press("escape", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.try_find("ssh-history-menu").is_none());
+            assert!(window.find("ssh-form").visible());
+            form.read(cx).username.focus_handle(cx).focus(window, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click(("ssh-history-value", 0usize), cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            assert_eq!(form.read(cx).username.read(cx).value().as_str(), "review");
+            form.read(cx).secret.focus_handle(cx).focus(window, cx);
+            window.input("never-save-this", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.try_find("ssh-history-menu").is_none());
+            window.click("ssh-cancel", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            app.update(cx, |app, cx| {
+                let stored =
+                    std::fs::read(app.preferences_directory.path().join("preferences.json"))
+                        .unwrap();
+                assert!(!String::from_utf8_lossy(&stored).contains("never-save-this"));
+                app.preferences = serde_json::from_slice(&stored).unwrap();
+                app.open_remote_repository(window, cx);
+            });
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.render_frame(cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.find(("ssh-history-value", 0usize)).visible());
+            assert!(window.try_find(("ssh-history-value", 1usize)).is_none());
+        })
+        .unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn ssh_dialog_validates_inputs_live_and_can_be_cancelled(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            cx.set_reduce_motion(true);
+        });
+        let (handle, app) = cx.update(|cx| {
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                cx.new(|cx| test_app(window, cx))
+            })
+            .unwrap()
+        });
+        let form = cx
+            .update_window(handle, |_, window, cx| {
+                app.update(cx, |app, cx| app.open_remote_repository(window, cx))
+            })
+            .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.render_frame(cx);
+            assert_eq!(window.find("ssh-connect").disabled(), Some(true));
+            window.click("ssh-connect", cx);
+            assert!(form.read(cx).error.is_none());
+            assert!(!app.read(cx).loading);
+        })
+        .unwrap();
+        let assert_disabled = |cx: &mut TestAppContext, disabled| {
+            cx.run_until_parked();
+            cx.update_window(handle, |_, window, cx| {
+                // Process input notifications without forcing a full window refresh.
+                window.draw(cx).clear(cx);
+                assert_eq!(
+                    window.find("ssh-connect").disabled() == Some(true),
+                    disabled
+                );
+            })
+            .unwrap();
+        };
+        let inputs = cx.update(|cx| {
+            let form = form.read(cx);
+            [
+                (form.host.clone(), "127.0.0.1", true),
+                (form.path.clone(), "/srv/demo", true),
+                (form.secret.clone(), "test-password", false),
+                (form.port.clone(), "0", true),
+                (form.port.clone(), "65536", true),
+                (form.port.clone(), "invalid", true),
+                (form.port.clone(), "2222", false),
+                (form.port.clone(), "", false),
+                (form.host.clone(), "", true),
+                (form.host.clone(), "example.com", false),
+                (form.path.clone(), "relative/path", true),
+                (form.path.clone(), "/srv/demo", false),
+                (form.secret.clone(), "", true),
+            ]
+        });
+        for (input, value, disabled) in inputs {
+            cx.update_window(handle, |_, window, cx| {
+                input.update(cx, |input, cx| input.set_value(value, window, cx));
+            })
+            .unwrap();
+            assert_disabled(cx, disabled);
+        }
+        cx.update_window(handle, |_, window, cx| {
+            // Password is required, while username and port may use SSH defaults.
+            form.read(cx).secret.focus_handle(cx).focus(window, cx);
+            window.input("test-password", cx);
+        })
+        .unwrap();
+        assert_disabled(cx, false);
+        cx.update_window(handle, |_, window, cx| {
+            window.click("ssh-auth-key", cx);
+        })
+        .unwrap();
+        assert_disabled(cx, false);
+        cx.update_window(handle, |_, window, cx| {
+            // An agent/default key needs no secret, but a passphrase needs a key file.
+            form.read(cx).secret.clone().update(cx, |input, cx| {
+                input.set_value("key-passphrase", window, cx)
+            });
+        })
+        .unwrap();
+        assert_disabled(cx, true);
+        let key = tempfile::NamedTempFile::new().unwrap();
+        cx.update_window(handle, |_, window, cx| {
+            form.read(cx).identity.clone().update(cx, |input, cx| {
+                input.set_value(key.path().display().to_string(), window, cx)
+            });
+        })
+        .unwrap();
+        assert_disabled(cx, false);
+        cx.update_window(handle, |_, window, cx| {
+            window.click("ssh-auth-password", cx);
+        })
+        .unwrap();
+        assert_disabled(cx, true);
+        cx.update_window(handle, |_, window, cx| {
+            assert!(form.read(cx).connection(cx).is_err());
+            assert!(!app.read(cx).loading);
+            window.click("ssh-cancel", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.try_find("ssh-form").is_none());
+            assert!(app.read(cx).repository.is_none());
+        })
+        .unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn ssh_auth_form_keeps_secrets_out_of_saved_connections(cx: &mut TestAppContext) {
+        use patchlook::git::SshAuthentication;
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            cx.set_reduce_motion(true);
+        });
+        let (handle, app) = cx.update(|cx| {
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                cx.new(|cx| test_app(window, cx))
+            })
+            .unwrap()
+        });
+        let form = cx
+            .update_window(handle, |_, window, cx| {
+                app.update(cx, |app, cx| app.open_remote_repository(window, cx))
+            })
+            .unwrap();
+        cx.run_until_parked();
+        let target = cx
+            .update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                window.render_frame(cx);
+                assert!(window.try_find("ssh-choose-config").is_none());
+                assert!(window.try_find("ssh-choose-key").is_none());
+                assert!(form.read(cx).secret.read(cx).presentation().is_masked());
+                for (input, value) in [
+                    (form.read(cx).host.clone(), "127.0.0.1"),
+                    (form.read(cx).port.clone(), "2222"),
+                    (form.read(cx).username.clone(), "review"),
+                    (form.read(cx).path.clone(), "/srv/demo"),
+                    (form.read(cx).secret.clone(), "session-only-secret"),
+                ] {
+                    input.update(cx, |input, cx| input.set_value(value, window, cx));
+                }
+                for masked in [false, true, false] {
+                    window.render_frame(cx);
+                    window.click("toggle-mask", cx);
+                    assert_eq!(
+                        form.read(cx).secret.read(cx).presentation().is_masked(),
+                        masked
+                    );
+                    assert_eq!(form.read(cx).secret.read(cx).value(), "session-only-secret");
+                }
+                let (target, secret) = form.read(cx).connection(cx).unwrap();
+                assert!(secret.is_some());
+                let RepositoryLocation::Ssh { options, .. } = &target else {
+                    unreachable!()
+                };
+                assert_eq!(options.port, Some(2222));
+                assert_eq!(options.username.as_deref(), Some("review"));
+                assert_eq!(options.authentication, SshAuthentication::Password);
+                let mut saved = Preferences::default();
+                saved.remember_repository(target.clone());
+                assert!(
+                    !serde_json::to_string(&saved)
+                        .unwrap()
+                        .contains("session-only-secret")
+                );
+                window.click("ssh-auth-key", cx);
+                assert!(form.read(cx).secret.read(cx).value().is_empty());
+                assert!(form.read(cx).secret.read(cx).presentation().is_masked());
+                form.read(cx).secret.clone().update(cx, |input, cx| {
+                    input.set_value("key-passphrase", window, cx);
+                });
+                window.render_frame(cx);
+                window.click("toggle-mask", cx);
+                assert!(!form.read(cx).secret.read(cx).presentation().is_masked());
+                assert_eq!(form.read(cx).secret.read(cx).value(), "key-passphrase");
+                window.render_frame(cx);
+                assert!(window.find("ssh-choose-key").visible());
+                window.click("ssh-advanced", cx);
+                window.render_frame(cx);
+                assert!(window.find("ssh-choose-config").visible());
+                form.read(cx)
+                    .port
+                    .clone()
+                    .update(cx, |input, cx| input.set_value("65536", window, cx));
+                assert!(form.read(cx).connection(cx).is_err());
+                window.click("ssh-cancel", cx);
+                target
+            })
+            .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            // Selecting a saved password connection prompts again before any I/O.
+            app.update(cx, |app, cx| {
+                app.open_saved_repository(target.clone(), window, cx)
+            });
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.render_frame(cx);
+            assert!(window.find("ssh-form").visible());
+            assert!(!app.read(cx).loading);
+            window.click("ssh-connect", cx);
+            assert!(!app.read(cx).loading);
+            assert!(app.read(cx).repository.is_none());
+        })
+        .unwrap();
+    }
+
+    #[gpui_kit::test]
+    #[ignore = "requires the isolated SSH fixture"]
+    fn ssh_sessions_survive_repository_switches_until_explicit_disconnect(cx: &mut TestAppContext) {
+        use patchlook::{
+            git::{SshAuthentication, SshOptions},
+            ssh_auth::SshSecret,
+        };
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            cx.set_reduce_motion(true);
+        });
+        let config = PathBuf::from(std::env::var_os("PATCHLOOK_TEST_SSH_CONFIG").unwrap());
+        let helper = PathBuf::from(std::env::var_os("PATCHLOOK_TEST_SSH_HELPER").unwrap());
+        let state = config.parent().unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        git(directory.path(), &["init", "-b", "main"]);
+        let local = Repository::open(directory.path()).unwrap().location;
+        for (authentication, identity_file, credential) in [
+            (SshAuthentication::Password, None, Some("patchlook-test")),
+            (SshAuthentication::Key, Some(state.join("id_ed25519")), None),
+            (
+                SshAuthentication::KeyWithPassphrase,
+                Some(state.join("id_ed25519_encrypted")),
+                Some("patchlook-test-key"),
+            ),
+        ] {
+            let options = SshOptions {
+                host: "127.0.0.1".into(),
+                port: Some(2222),
+                username: Some("review".into()),
+                authentication,
+                identity_file,
+                config_file: Some(config.clone()),
+            };
+            let target = RepositoryLocation::Ssh {
+                path: "/home/review/repos/demo".into(),
+                options: options.clone(),
+            };
+            let other = RepositoryLocation::Ssh {
+                path: "/home/review/repos/unborn".into(),
+                options,
+            };
+            let secret =
+                || credential.map(|value| SshSecret::new(value.into(), helper.clone()).unwrap());
+            let (handle, app) = cx.update(|cx| {
+                gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                    cx.new(|cx| test_app(window, cx))
+                })
+                .unwrap()
+            });
+            cx.update(|cx| {
+                app.update(cx, |app, cx| {
+                    app.load_repository(target.clone(), secret(), cx);
+                })
+            });
+            cx.run_until_parked();
+            let original = cx.update(|cx| {
+                let app = app.read(cx);
+                assert!(app.error.is_none(), "{:?}", app.error);
+                assert_eq!(app.remote_status(&target), "ssh_connected");
+                app.repository.clone().unwrap()
+            });
+            // Repeatedly switch back through the same action used by Recent rows.
+            // No password/passphrase is supplied after the first successful connection.
+            for _ in 0..2 {
+                cx.update(|cx| app.update(cx, |app, cx| app.load(local.clone(), cx)));
+                cx.run_until_parked();
+                cx.update_window(handle, |_, window, cx| {
+                    app.update(cx, |app, cx| {
+                        assert!(app.error.is_none(), "{:?}", app.error);
+                        assert_eq!(app.repository.as_ref().unwrap().location, local);
+                        assert_eq!(app.remote_status(&target), "ssh_connected");
+                        assert_eq!(original.branch_name().unwrap(), "main");
+                        app.open_saved_repository(target.clone(), window, cx);
+                        assert!(app.loading);
+                        assert!(app.pending_connection.is_none());
+                    });
+                    window.render_frame(cx);
+                    assert!(window.try_find("ssh-form").is_none());
+                })
+                .unwrap();
+                cx.run_until_parked();
+                cx.update(|cx| {
+                    let app = app.read(cx);
+                    assert!(app.error.is_none(), "{:?}", app.error);
+                    assert_eq!(app.repository.as_ref().unwrap().location, target);
+                    assert!(app.working.loaded);
+                    assert_eq!(app.remote_sessions.len(), 1);
+                });
+            }
+            // A second remote repository and a failed switch leave the first session alive.
+            cx.update(|cx| {
+                app.update(cx, |app, cx| {
+                    app.load_repository(other.clone(), secret(), cx);
+                })
+            });
+            cx.run_until_parked();
+            let second = cx.update(|cx| {
+                let app = app.read(cx);
+                assert!(app.error.is_none(), "{:?}", app.error);
+                assert_eq!(app.remote_sessions.len(), 2);
+                assert_eq!(app.remote_status(&target), "ssh_connected");
+                assert_eq!(app.remote_status(&other), "ssh_connected");
+                app.repository.clone().unwrap()
+            });
+            cx.update(|cx| {
+                app.update(cx, |app, cx| {
+                    app.load(directory.path().join("missing"), cx);
+                })
+            });
+            cx.run_until_parked();
+            cx.update_window(handle, |_, window, cx| {
+                app.update(cx, |app, cx| {
+                    assert!(app.error.is_some());
+                    assert_eq!(app.remote_sessions.len(), 2);
+                    assert_eq!(app.repository.as_ref().unwrap().location, other);
+                    app.open_saved_repository(target.clone(), window, cx);
+                });
+            })
+            .unwrap();
+            cx.run_until_parked();
+            cx.update(|cx| app.update(cx, |app, cx| app.load(local.clone(), cx)));
+            cx.run_until_parked();
+            cx.update_window(handle, |_, window, cx| {
+                app.update(cx, |app, cx| {
+                    assert!(app.error.is_none(), "{:?}", app.error);
+                    app.disconnect_repository(&target, window, cx);
+                    assert_eq!(app.repository.as_ref().unwrap().location, local);
+                    assert_eq!(app.remote_status(&target), "ssh_disconnected");
+                    assert_eq!(app.remote_status(&other), "ssh_connected");
+                    assert!(original.branch_name().is_err());
+                    assert_eq!(second.branch_name().unwrap(), "main");
+                    if authentication.requires_secret() {
+                        app.open_saved_repository(target.clone(), window, cx);
+                        assert!(!app.loading);
+                    }
+                });
+                if authentication.requires_secret() {
+                    window.render_frame(cx);
+                    window.render_frame(cx);
+                    assert!(window.find("ssh-form").visible());
+                    window.click("ssh-cancel", cx);
+                }
+            })
+            .unwrap();
+            cx.run_until_parked();
+            cx.update(|cx| {
+                app.update(cx, |app, cx| {
+                    app.load_repository(target.clone(), secret(), cx);
+                })
+            });
+            cx.run_until_parked();
+            let reconnected = cx.update(|cx| {
+                let app = app.read(cx);
+                assert!(app.error.is_none(), "{:?}", app.error);
+                assert_eq!(app.remote_sessions.len(), 2);
+                let saved = serde_json::to_string(&app.preferences).unwrap();
+                assert!(!saved.contains("patchlook-test"));
+                app.repository.clone().unwrap()
+            });
+            // Closing the window tears down both the visible and background sessions,
+            // even when an in-flight reader still owns another Repository handle.
+            let weak = app.downgrade();
+            cx.update_window(handle, |_, window, _| window.remove_window())
+                .unwrap();
+            cx.update(|_| drop(app));
+            cx.run_until_parked();
+            assert!(weak.upgrade().is_none());
+            assert!(reconnected.branch_name().is_err());
+            assert!(second.branch_name().is_err());
+        }
+    }
+
+    #[gpui_kit::test]
+    #[ignore = "requires the isolated SSH fixture"]
+    fn ssh_dialog_loads_readonly_snapshots_and_preserves_local_workflows(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            cx.set_reduce_motion(true);
+        });
+        let config = std::env::var("PATCHLOOK_TEST_SSH_CONFIG").unwrap();
+        let (handle, app) = cx.update(|cx| {
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                cx.new(|cx| test_app(window, cx))
+            })
+            .unwrap()
+        });
+        cx.update_window(handle, |_, window, cx| {
+            app.update(cx, |app, cx| {
+                app.access_mode = AccessMode::ReadWrite;
+                let form = app.open_remote_repository(window, cx);
+                form.update(cx, |form, _| {
+                    form.authentication = patchlook::git::SshAuthentication::Key
+                });
+                for (input, value) in [
+                    (form.read(cx).host.clone(), "patchlook-test"),
+                    (form.read(cx).path.clone(), "/home/review/repos/demo"),
+                    (form.read(cx).config.clone(), config.as_str()),
+                ] {
+                    input.update(cx, |input, cx| input.set_value(value, window, cx));
+                }
+            });
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.render_frame(cx);
+            window.click("ssh-connect", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            app.update(cx, |app, cx| {
+                assert!(app.error.is_none(), "{:?}", app.error);
+                assert!(app.repository.as_ref().unwrap().is_remote());
+                assert_eq!(app.access_mode, AccessMode::ReadOnly);
+                assert!(app.view == View::Repositories);
+                assert!(app.history.files.loaded);
+                assert_eq!(app.history.commits.len(), 100);
+                assert!(app.external_file_target().is_none());
+                app.set_access_mode(AccessMode::ReadWrite, cx);
+                assert_eq!(app.access_mode, AccessMode::ReadOnly);
+                assert!(!app.staging_visible());
+                app.switch_view(View::Working, cx);
+            });
+            window.render_frame(cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update(|cx| {
+            app.update(cx, |app, cx| {
+                assert!(app.working.loaded);
+                assert!(!app.working.changes.is_empty());
+                assert!(app.working.error.is_none(), "{:?}", app.working.error);
+                app.switch_view(View::History, cx);
+            })
+        });
+        cx.run_until_parked();
+        cx.update(|cx| {
+            app.update(cx, |app, cx| {
+                assert!(app.history.files.loaded);
+                assert_eq!(app.history.commits.len(), 100);
+                app.browse_branch(Some("refs/heads/feature/demo".into()), cx);
+            })
+        });
+        cx.run_until_parked();
+        cx.update(|cx| {
+            app.update(cx, |app, cx| {
+                assert_eq!(app.viewed_branch(), Some("refs/heads/feature/demo"));
+                app.switch_view(View::Repositories, cx);
+                app.switch_view(View::Working, cx);
+                assert!(!app.working.files_loading);
+                assert!(!app.working.changes.is_empty());
+            })
+        });
+        cx.update_window(handle, |_, window, cx| {
+            app.update(cx, |app, cx| {
+                let old = app.repository.clone().unwrap();
+                let path = old.location.clone();
+                app.disconnect_repository(&path, window, cx);
+                assert!(app.repository.is_none());
+                assert!(app.working.changes.is_empty());
+                assert!(app.history.commits.is_empty());
+                assert!(app.preferences.repository.is_none());
+                assert_eq!(app.preferences.recent_repositories.len(), 1);
+                assert!(old.branch_name().is_err());
+                app.reconnect_repository(path.clone(), window, cx);
+                assert_eq!(app.remote_status(&path), "ssh_connecting");
+            });
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update(|cx| {
+            let app = app.read(cx);
+            assert!(app.error.is_none(), "{:?}", app.error);
+            assert!(app.repository.as_ref().unwrap().is_remote());
+            assert!(app.working.loaded);
+            assert_eq!(app.preferences.recent_repositories.len(), 1);
+        });
+        let directory = tempfile::tempdir().unwrap();
+        git(directory.path(), &["init", "-b", "main"]);
+        cx.update(|cx| app.update(cx, |app, cx| app.load(directory.path().to_owned(), cx)));
+        cx.run_until_parked();
+        cx.update(|cx| {
+            app.update(cx, |app, cx| {
+                assert!(!app.repository.as_ref().unwrap().is_remote());
+                assert_eq!(app.preferences.recent_repositories.len(), 2);
+                app.set_access_mode(AccessMode::ReadWrite, cx);
+                assert!(app.staging_visible());
+            })
+        });
     }
 
     #[gpui_kit::test]
@@ -4794,8 +6486,35 @@ mod tests {
             window.click("open-repository", cx);
         })
         .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.within("popup-menu").click(0usize, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
         assert!(cx.did_prompt_for_paths());
         cx.simulate_path_prompt_response(|_| None);
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click("open-repository", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.within("popup-menu").click(1usize, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.render_frame(cx);
+            assert!(window.find("ssh-form").visible());
+            window.click("ssh-cancel", cx);
+        })
+        .unwrap();
         cx.run_until_parked();
         cx.update_window(handle, |_, window, cx| {
             window.click("refresh", cx);
@@ -5237,9 +6956,9 @@ mod tests {
             cx.run_until_parked();
             cx.update(|cx| {
                 let state = app.read(cx);
-                let next_path = next.map(|index| repositories[index].root.clone());
+                let next_path = next.map(|index| repositories[index].location.clone());
                 assert_eq!(
-                    state.repository.as_ref().map(|repo| repo.root.clone()),
+                    state.repository.as_ref().map(|repo| repo.location.clone()),
                     next_path
                 );
                 assert_eq!(state.preferences.repository, next_path);
@@ -5256,7 +6975,7 @@ mod tests {
                     !saved
                         .recent_repositories
                         .iter()
-                        .any(|entry| entry.path == repositories[removed].root)
+                        .any(|entry| entry.path == repositories[removed].location)
                 );
             });
             assert!(repositories[removed].root.join(".git").is_dir());

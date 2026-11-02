@@ -269,10 +269,7 @@ impl Repository {
                 change.area != Area::Staged,
             );
         }
-        ensure!(
-            mode == AccessMode::ReadWrite,
-            "Repository is in read-only mode"
-        );
+        self.ensure_writable(mode)?;
         ensure!(
             change.area != Area::Conflict,
             "Resolve merge conflicts before staging in Patchlook"
@@ -298,10 +295,7 @@ impl Repository {
         changes: &[Change],
         staged: bool,
     ) -> Result<()> {
-        ensure!(
-            mode == AccessMode::ReadWrite,
-            "Repository is in read-only mode"
-        );
+        self.ensure_writable(mode)?;
         ensure!(
             changes.iter().all(|change| change.area != Area::Conflict),
             "Resolve merge conflicts before staging in Patchlook"
@@ -352,10 +346,7 @@ impl Repository {
         block: usize,
         displayed: &StagingPatch,
     ) -> Result<()> {
-        ensure!(
-            mode == AccessMode::ReadWrite,
-            "Repository is in read-only mode"
-        );
+        self.ensure_writable(mode)?;
         ensure!(
             matches!(change.area, Area::Unstaged | Area::Untracked),
             "Only unstaged changes can be discarded"
@@ -373,6 +364,7 @@ impl Repository {
     }
 
     pub(super) fn apply_patch(&self, patch: &str, cached: bool) -> Result<()> {
+        ensure!(!self.is_remote(), "SSH repositories are read-only");
         let mut cmd = command(&self.root);
         cmd.arg("apply");
         if cached {

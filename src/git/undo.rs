@@ -135,10 +135,7 @@ struct WriteRecord {
 
 impl WriteRecord {
     fn restore(&self, repo: &Repository, mode: AccessMode, undo: bool) -> Result<()> {
-        ensure!(
-            mode == AccessMode::ReadWrite,
-            "Repository is in read-only mode"
-        );
+        repo.ensure_writable(mode)?;
         ensure!(repo.root == self.root, "The repository changed");
         ensure!(
             head(repo)? == self.head,
@@ -285,10 +282,7 @@ impl WriteHistory {
         scope: WriteScope,
         write: impl FnOnce() -> Result<()>,
     ) -> Result<Vec<PathBuf>> {
-        ensure!(
-            mode == AccessMode::ReadWrite,
-            "Repository is in read-only mode"
-        );
+        repo.ensure_writable(mode)?;
         let head = head(repo)?;
         let before = Snapshot::read(repo, &scope)?;
         write()?;

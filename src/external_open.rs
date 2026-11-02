@@ -46,6 +46,10 @@ impl FileToOpen {
     }
 
     fn prepare(&self) -> Result<(PathBuf, Option<TempDir>)> {
+        ensure!(
+            !self.repository.is_remote(),
+            "External opening is only available for local repositories"
+        );
         let path = self.path();
         if self.change.status != 'D' {
             ensure!(

@@ -39,6 +39,42 @@ python3 -m unittest discover -s scripts -p 'test_*.py'
 
 Use `python` instead of `python3` on Windows. Git tests use isolated temporary repositories. The test suites cover repository reads, preferences and localization, tree and image behavior, diff layout and scrolling, and packaging failure paths.
 
+### SSH test environment
+
+With Docker running, start an isolated Linux SSH server:
+
+```sh
+python3 scripts/ssh_test.py up
+```
+
+This creates `patchlook-ssh-test`, bound only to `127.0.0.1:2222`. Its repositories live inside the container; no local repository is mounted. A fixture key and SSH config are generated under ignored `dist/ssh-test/`. The trusted host key is read directly from the container. Your normal SSH config and keys are untouched.
+
+In **Connect via SSH…**, use host `127.0.0.1`, port `2222`, username `review`, and repository `/home/review/repos/demo`. Choose **Password** and use the public fixture password `patchlook-test`. Leave **Advanced options** empty for the normal first-connection flow. Compare the confirmation fingerprint with `ssh-keygen -l -E sha256 -f dist/ssh-test/known_hosts`, then trust it. This records the host in your normal SSH known_hosts. To keep manual testing isolated instead, the optional `dist/ssh-test/config` uses the fixture trust file.
+
+For **SSH key**, choose `dist/ssh-test/id_ed25519`, or `dist/ssh-test/id_ed25519_encrypted` with fixture passphrase `patchlook-test-key`. These are disposable test credentials. The existing config alias also supports CLI key authentication:
+
+```sh
+cargo run --locked --release -- --ssh patchlook-test /home/review/repos/demo \
+  --ssh-config "$PWD/dist/ssh-test/config"
+```
+
+The fixture includes 106 commits, another branch, staged/unstaged changes, renames, deleted and untracked files, binary and image files, and paths containing spaces, quotes, Unicode, and shell metacharacters. `/home/review/repos/unborn` has no commits yet.
+
+The live SSH tests are ignored in ordinary test runs. Run both repository and UI tests explicitly:
+
+```sh
+PATCHLOOK_TEST_SSH_CONFIG="$PWD/dist/ssh-test/config" \
+  cargo test --locked --test ssh_repository -- --ignored --test-threads=1
+cargo build --locked --bin patchlook
+PATCHLOOK_TEST_SSH_CONFIG="$PWD/dist/ssh-test/config" \
+PATCHLOOK_TEST_SSH_HELPER="$PWD/target/debug/patchlook" \
+  cargo test --locked --bin patchlook ssh_ -- --ignored --test-threads=1
+```
+
+One test terminates only the fixture user's SSH worker to check disconnect/reconnect behavior; avoid reviewing that fixture in the app while running it. Stop the server with `python3 scripts/ssh_test.py down`; `up` updates the fixture startup script and restarts it with its repository contents preserved. To recreate the fixture from scratch, remove only its container with `docker rm -f patchlook-ssh-test`, then run `up`.
+
+`RepositoryLocation` keeps local paths distinct from SSH host/path/config targets. Local Git calls use direct process arguments. SSH calls quote each argument for the Linux shell and share one framed SSH process, avoiding a new authentication round trip for every read. History uses a separate streaming process so a completed search page can stop `git log` early. A small temporary shell worker is removed when the session ends; it is not an installed service. Remote mutation is rejected in the Git API as well as the UI. Authentication and host-key verification use system OpenSSH. `ssh_auth.rs` serves passwords/passphrases from memory over a capability-protected loopback connection to this same executable in ASKPASS mode, before GPUI starts. No credential is placed in a file, process argument, environment value, or persisted metadata. The helper sends framed prompts through the same capability-protected channel. It supplies credentials only for the expected target prompt. Unknown-host prompts with a SHA-256 fingerprint are routed to the owning window by `ssh_host.rs`; acceptance returns to the same OpenSSH handshake, which persists the key. Declining or destroying the window rejects the request. Other confirmation prompts are rejected. The application forces `StrictHostKeyChecking=ask` for interactive connections, never `accept-new` or `no`; it does not scan and reconnect with a separately accepted key. Existing known_hosts (including configured files) and OpenSSH changed/revoked-key rejection remain authoritative. Tests use isolated trust files, cover both password/key login, and verify refusal, persistence across connections, changed-key blocking, and window cancellation. Connection metadata retains the authentication method so opening a disconnected Recent entry or choosing Reconnect can request a fresh secret. Normal startup restores local repositories automatically but leaves saved SSH repositories disconnected in Repos; an explicit command-line SSH target still opens on launch. A per-window remote-session map owns authenticated Repository handles independently of the current view. Switching repositories reloads their data through the retained session without requesting credentials again. Refresh also reuses it. Disconnect, explicit reconnect, removal, and window teardown close the relevant sessions; switching or a failed load does not close other connected sessions. Interactive multi-factor prompts and server password changes remain unsupported.
+
 ### Build cache
 
 Keep builds in the repository's default `target/` directory. The `dev` profile uses `debug = "line-tables-only"` and `split-debuginfo = "packed"`; tests inherit these settings. This retains file and line information for backtraces and keeps incremental compilation enabled. Full variable inspection requires a build with more debug information.
@@ -125,7 +161,7 @@ Check the existing submission before rerunning a failed release. An `Accepted` r
 
 Patchlook uses the [GPUI Kit fork](https://github.com/worldtheater/gpui-kit/tree/codex/diff-tool-patches), on the `codex/diff-tool-patches` branch. [Cargo.toml](../Cargo.toml) pins its Git revision through `[patch.crates-io]`; [Cargo.lock](../Cargo.lock) is checked in. Cargo fetches the source automatically, so normal builds need neither a submodule nor a sibling checkout.
 
-The patch series starts from the GPUI Kit 0.8.0 source commit `1676826d9d49b90f4d7b6808b69924f58796f6f1`. Its current tip is `0917a5564505fceacfbbf966d90c0c19a7af9820`.
+The patch series starts from the GPUI Kit 0.8.0 source commit `1676826d9d49b90f4d7b6808b69924f58796f6f1`. Its current tip is `907fa984b7a1f316fc767ccf3e25c10b54932518`.
 
 | Commit | Purpose |
 | --- | --- |
@@ -142,6 +178,7 @@ The patch series starts from the GPUI Kit 0.8.0 source commit `1676826d9d49b90f4
 | `2a43f3aa` | Let the application soften changed-line and inline-change backgrounds by source position without removing diff semantics. |
 | `9bc37a46` | Isolate gutter actions from line selection and let applications disable mouse selection through line numbers. |
 | `0917a556` | Add a smaller switch size and expose leading label placement while retaining standard switch behavior. |
+| `907fa984` | Apply dialog entrance opacity inside the deferred overlay host so the backdrop and surface fade together. |
 
 When updating GPUI Kit:
 

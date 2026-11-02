@@ -4,13 +4,18 @@ mod app;
 mod change_tree;
 mod file_icons;
 mod image_diff;
+mod remote_repository;
+mod ssh_host;
 mod strings;
 use app::{About, OpenRepository, Patchlook, Quit, Refresh};
 use gpui_kit::*;
 use strings::tr;
 
-fn main() {
-    let repository = std::env::args_os().nth(1).map(std::path::PathBuf::from);
+fn main() -> anyhow::Result<()> {
+    if let Some(code) = patchlook::ssh_auth::run_helper_if_requested() {
+        std::process::exit(code);
+    }
+    let repository = repository_argument(std::env::args_os().skip(1).collect())?;
     application()
         .with_assets(file_icons::AppAssets)
         .run(move |cx| {
@@ -75,6 +80,44 @@ fn main() {
             .expect("Cannot open Patchlook");
             cx.activate(true);
         });
+    Ok(())
+}
+
+fn repository_argument(
+    args: Vec<std::ffi::OsString>,
+) -> anyhow::Result<Option<patchlook::git::RepositoryLocation>> {
+    use patchlook::git::{RepositoryLocation, SshOptions};
+    if args.is_empty() {
+        return Ok(None);
+    }
+    if args.len() == 1 && args[0] != "--ssh" {
+        return Ok(Some(RepositoryLocation::Local((&args[0]).into())));
+    }
+    anyhow::ensure!(
+        args[0] == "--ssh" && (args.len() == 3 || (args.len() == 5 && args[3] == "--ssh-config")),
+        "Usage: patchlook [path] | --ssh host /repository/path [--ssh-config file]"
+    );
+    let destination = args[1]
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("SSH host must be UTF-8"))?;
+    let (username, host) = destination
+        .split_once('@')
+        .map(|(user, host)| (Some(user.to_owned()), host))
+        .unwrap_or((None, destination));
+    let target = RepositoryLocation::Ssh {
+        path: args[2]
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("Remote path must be UTF-8"))?
+            .into(),
+        options: SshOptions {
+            host: host.into(),
+            username,
+            config_file: args.get(4).map(Into::into),
+            ..Default::default()
+        },
+    };
+    target.validate()?;
+    Ok(Some(target))
 }
 
 fn update_menus(cx: &mut App) {

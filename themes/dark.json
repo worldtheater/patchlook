@@ -26,6 +26,7 @@
     "button.foreground": "#c8c8c8",
     "button.hover.background": "#393939",
     "button.active.background": "#414141",
+    "primary.foreground": "#1e1e1e",
     "popover.background": "#2a2a2a",
     "popover.foreground": "#c8c8c8",
     "title_bar.background": "#343434",

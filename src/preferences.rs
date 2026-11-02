@@ -1,7 +1,74 @@
+use crate::git::RepositoryLocation;
 use anyhow::{Context, Result};
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
-use std::{fs, io::ErrorKind, path::PathBuf};
+use std::{collections::BTreeMap, fs, io::ErrorKind, path::PathBuf};
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum SshHistoryField {
+    Host,
+    Port,
+    Username,
+    Path,
+    Identity,
+    Config,
+}
+
+/// Only non-secret connection fields can be recorded in input history.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(transparent)]
+pub struct SshInputHistory(BTreeMap<SshHistoryField, Vec<String>>);
+
+impl SshInputHistory {
+    const LIMIT_PER_FIELD: usize = 20;
+
+    pub fn values(&self, field: SshHistoryField) -> &[String] {
+        self.0.get(&field).map(Vec::as_slice).unwrap_or_default()
+    }
+
+    pub fn remember(&mut self, target: &RepositoryLocation) {
+        let RepositoryLocation::Ssh { options, path } = target else {
+            return;
+        };
+        for (field, value) in [
+            (SshHistoryField::Host, Some(options.host.clone())),
+            (
+                SshHistoryField::Port,
+                options.port.map(|port| port.to_string()),
+            ),
+            (SshHistoryField::Username, options.username.clone()),
+            (SshHistoryField::Path, Some(path.clone())),
+            (
+                SshHistoryField::Identity,
+                options
+                    .identity_file
+                    .as_ref()
+                    .map(|p| p.display().to_string()),
+            ),
+            (
+                SshHistoryField::Config,
+                options
+                    .config_file
+                    .as_ref()
+                    .map(|p| p.display().to_string()),
+            ),
+        ] {
+            if let Some(value) = value.filter(|value| !value.is_empty()) {
+                let values = self.0.entry(field).or_default();
+                values.retain(|old| *old != value);
+                values.insert(0, value);
+                values.truncate(Self::LIMIT_PER_FIELD);
+            }
+        }
+    }
+
+    pub fn remove(&mut self, field: SshHistoryField, value: &str) {
+        if let Some(values) = self.0.get_mut(&field) {
+            values.retain(|old| old != value);
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -15,6 +82,102 @@ pub enum Appearance {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ssh_input_history_deduplicates_bounds_and_persists_removals() {
+        use crate::git::{SshAuthentication, SshOptions};
+        let mut preferences = Preferences::default();
+        let mut target = RepositoryLocation::Ssh {
+            path: "/srv/demo".into(),
+            options: SshOptions {
+                host: "server.example".into(),
+                port: Some(2222),
+                username: Some("review".into()),
+                identity_file: Some("/keys/review".into()),
+                config_file: Some("/config/ssh".into()),
+                authentication: SshAuthentication::KeyWithPassphrase,
+            },
+        };
+        preferences.remember_repository(target.clone());
+        preferences.ssh_input_history.remember(&target);
+        preferences.ssh_input_history.remember(&target);
+        for (field, value) in [
+            (SshHistoryField::Host, "server.example"),
+            (SshHistoryField::Port, "2222"),
+            (SshHistoryField::Username, "review"),
+            (SshHistoryField::Path, "/srv/demo"),
+            (SshHistoryField::Identity, "/keys/review"),
+            (SshHistoryField::Config, "/config/ssh"),
+        ] {
+            assert_eq!(preferences.ssh_input_history.values(field), &[value]);
+        }
+        for index in 0..SshInputHistory::LIMIT_PER_FIELD + 2 {
+            if let RepositoryLocation::Ssh { options, .. } = &mut target {
+                options.host = format!("host-{index}");
+                options.port = None;
+                options.username = None;
+            }
+            preferences.ssh_input_history.remember(&target);
+        }
+        let hosts = preferences.ssh_input_history.values(SshHistoryField::Host);
+        assert_eq!(hosts.len(), SshInputHistory::LIMIT_PER_FIELD);
+        assert_eq!(
+            hosts[0],
+            format!("host-{}", SshInputHistory::LIMIT_PER_FIELD + 1)
+        );
+        preferences
+            .ssh_input_history
+            .remove(SshHistoryField::Port, "2222");
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("preferences.json");
+        preferences.write_to(&path).unwrap();
+        let restored: Preferences = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+        assert!(
+            restored
+                .ssh_input_history
+                .values(SshHistoryField::Port)
+                .is_empty()
+        );
+        assert_eq!(
+            restored.ssh_input_history.values(SshHistoryField::Username),
+            &["review"]
+        );
+        assert_eq!(restored.recent_repositories.len(), 1);
+        assert_eq!(
+            restored.recent_repositories[0].path,
+            preferences.recent_repositories[0].path
+        );
+    }
+
+    #[test]
+    fn local_paths_and_remote_hosts_keep_distinct_recent_entries() {
+        let mut preferences: Preferences = serde_json::from_str(
+            r#"{"appearance":"system","layout":"split","repository":"/srv/demo","recent_repositories":[{"path":"/srv/demo","viewed_branch":"refs/heads/local"}]}"#,
+        ).unwrap();
+        let local = preferences.repository.clone().unwrap();
+        let remote = |host: &str| RepositoryLocation::Ssh {
+            path: "/srv/demo".into(),
+            options: crate::git::SshOptions {
+                host: host.into(),
+                config_file: Some("fixture.config".into()),
+                ..Default::default()
+            },
+        };
+        let first = remote("first");
+        let second = remote("second");
+        preferences.remember_repository(first.clone());
+        preferences.set_viewed_branch(&first, Some("refs/heads/one".into()));
+        preferences.remember_repository(second.clone());
+        preferences.set_viewed_branch(&second, Some("refs/heads/two".into()));
+        preferences.remember_repository(first.clone());
+        let restored: Preferences =
+            serde_json::from_slice(&serde_json::to_vec(&preferences).unwrap()).unwrap();
+        assert_eq!(restored.recent_repositories.len(), 3);
+        assert_eq!(restored.viewed_branch(&local), Some("refs/heads/local"));
+        assert_eq!(restored.viewed_branch(&first), Some("refs/heads/one"));
+        assert_eq!(restored.viewed_branch(&second), Some("refs/heads/two"));
+        assert_eq!(restored.repository, Some(first));
+    }
 
     #[test]
     fn display_preferences_keep_defaults_and_round_trip_through_disk() {
@@ -104,7 +267,7 @@ mod tests {
         assert_eq!(Preferences::default().repository_sidebar_ratio, None);
         let preferences = Preferences {
             repository_sidebar_ratio: Some(0.35),
-            repository: Some(PathBuf::from("repository")),
+            repository: Some(PathBuf::from("repository").into()),
             ..Preferences::default()
         };
         let restored: Preferences =
@@ -116,8 +279,8 @@ mod tests {
     #[test]
     fn recent_repositories_deduplicate_and_keep_independent_viewed_branches() {
         let mut preferences = Preferences::default();
-        let first = PathBuf::from("first");
-        let second = PathBuf::from("second");
+        let first: RepositoryLocation = PathBuf::from("first").into();
+        let second: RepositoryLocation = PathBuf::from("second").into();
         preferences.remember_repository(first.clone());
         preferences.set_viewed_branch(&first, Some("refs/heads/feature".into()));
         preferences.remember_repository(second.clone());
@@ -149,7 +312,7 @@ mod tests {
     fn repository_names_sort_case_insensitively_with_paths_breaking_ties() {
         let mut preferences = Preferences::default();
         for path in ["z/Zebra", "b/alpha", "a/Alpha", "c/Beta"] {
-            preferences.remember_repository(path.into());
+            preferences.remember_repository(PathBuf::from(path));
         }
         assert_eq!(
             preferences
@@ -158,13 +321,13 @@ mod tests {
                 .map(|repo| repo.path.clone())
                 .collect::<Vec<_>>(),
             ["a/Alpha", "b/alpha", "c/Beta", "z/Zebra"]
-                .map(PathBuf::from)
+                .map(|path| RepositoryLocation::Local(PathBuf::from(path)))
                 .to_vec(),
         );
-        preferences.remember_repository("z/Zebra".into());
+        preferences.remember_repository(PathBuf::from("z/Zebra"));
         assert_eq!(
             preferences.recent_repositories[0].path,
-            PathBuf::from("a/Alpha")
+            RepositoryLocation::Local(PathBuf::from("a/Alpha"))
         );
     }
 }
@@ -285,9 +448,11 @@ pub struct Preferences {
     pub layout: Layout,
     #[serde(default)]
     pub language: Language,
-    pub repository: Option<PathBuf>,
+    pub repository: Option<RepositoryLocation>,
     #[serde(default)]
     pub recent_repositories: Vec<RecentRepository>,
+    #[serde(default)]
+    pub ssh_input_history: SshInputHistory,
     #[serde(default)]
     pub repository_sidebar_ratio: Option<f32>,
     #[serde(default)]
@@ -312,6 +477,7 @@ impl Default for Preferences {
             language: Language::default(),
             repository: None,
             recent_repositories: Vec::new(),
+            ssh_input_history: SshInputHistory::default(),
             repository_sidebar_ratio: None,
             tree_file_list: false,
             show_file_stats: false,
@@ -323,12 +489,18 @@ impl Default for Preferences {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct RecentRepository {
-    pub path: PathBuf,
+    pub path: RepositoryLocation,
     pub viewed_branch: Option<String>,
 }
 
 impl Preferences {
-    pub fn remember_repository(&mut self, path: PathBuf) {
+    pub fn remember_repository(&mut self, path: impl Into<RepositoryLocation>) {
+        let path = path.into();
+        self.add_repository(path.clone());
+        self.repository = Some(path);
+    }
+
+    pub fn add_repository(&mut self, path: RepositoryLocation) {
         if !self
             .recent_repositories
             .iter()
@@ -340,31 +512,27 @@ impl Preferences {
             });
         }
         self.sort_repositories();
-        self.repository = Some(path);
     }
 
     fn sort_repositories(&mut self) {
-        self.recent_repositories.sort_by_cached_key(|entry| {
-            (
-                entry
-                    .path
-                    .file_name()
-                    .unwrap_or(entry.path.as_os_str())
-                    .to_string_lossy()
-                    .to_lowercase(),
-                entry.path.clone(),
-            )
-        });
+        self.recent_repositories
+            .sort_by_cached_key(|entry| (entry.path.name().to_lowercase(), entry.path.to_string()));
     }
 
-    pub fn viewed_branch(&self, path: &std::path::Path) -> Option<&str> {
+    pub fn viewed_branch(&self, path: impl Into<RepositoryLocation>) -> Option<&str> {
+        let path = path.into();
         self.recent_repositories
             .iter()
             .find(|entry| entry.path == path)
             .and_then(|entry| entry.viewed_branch.as_deref())
     }
 
-    pub fn set_viewed_branch(&mut self, path: &std::path::Path, reference: Option<String>) {
+    pub fn set_viewed_branch(
+        &mut self,
+        path: impl Into<RepositoryLocation>,
+        reference: Option<String>,
+    ) {
+        let path = path.into();
         if let Some(entry) = self
             .recent_repositories
             .iter_mut()

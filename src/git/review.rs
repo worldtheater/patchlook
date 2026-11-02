@@ -180,10 +180,7 @@ impl Repository {
         review: &ReviewPatch,
         block: usize,
     ) -> Result<()> {
-        ensure!(
-            mode == AccessMode::ReadWrite,
-            "Repository is in read-only mode"
-        );
+        self.ensure_writable(mode)?;
         review.validate(self)?;
         let action = review.actions.get(block).context("Unknown review block")?;
         let version = &review.versions[action.version];
@@ -205,10 +202,7 @@ impl Repository {
         review: &ReviewPatch,
         block: usize,
     ) -> Result<()> {
-        ensure!(
-            mode == AccessMode::ReadWrite,
-            "Repository is in read-only mode"
-        );
+        self.ensure_writable(mode)?;
         review.validate(self)?;
         let action = review.actions.get(block).context("Unknown review block")?;
         let version = &review.versions[action.version];

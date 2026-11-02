@@ -23,6 +23,7 @@ Inspect local changes, explore commit history, and compare file versions. Patchl
 - **Review changes** — inspect staged, unstaged, and untracked files, with added and deleted line counts.
 - **Stage selectively** — in read/write mode, stage or unstage whole files and contiguous change blocks. Discard an unwanted block after confirmation.
 - **Explore history** — browse branches and commits, or search the full branch history by message or SHA prefix.
+- **Browse over SSH** — inspect changes and history in a Linux server's repository without cloning it locally. Remote repositories stay read-only.
 - **Compare code** — switch between side-by-side and inline diffs, with syntax highlighting and changes highlighted within each line.
 - **Stay focused** — collapse unchanged sections, wrap long lines, or scroll both versions together.
 - **Compare images** — view versions side by side, fit them to the window, or zoom and pan to inspect details.
@@ -50,6 +51,14 @@ Browse [Releases](https://github.com/worldtheater/patchlook/releases) for publis
 Refresh after making changes in another tool. Branch browsing uses local Git references; fetch updates with your usual Git client.
 
 Text diffs require UTF-8. Supported images are shown as previews; other binary files are listed without a content diff.
+
+### Connect to a Linux server
+
+Open the repository menu in the title bar or the **+** menu above Recent, then choose **Connect via SSH…**. Enter the host, port, username, and repository's absolute Linux path separately. Choose **Password** or **SSH key** authentication. A key file can be selected, with an optional passphrase; leave the file empty to use default keys or your SSH agent. **Advanced options** contains the optional SSH config file. A blank port or username uses SSH config, then the normal OpenSSH default. Connections are saved in Recent.
+
+The client needs OpenSSH (`ssh` on `PATH`). The server needs Git, a POSIX shell, and standard Linux command-line tools. On the first connection, Patchlook shows the server's SHA-256 host-key fingerprint. Compare it with a trusted source and choose **Trust and connect**. OpenSSH saves the confirmed key in its normal `known_hosts` file (or the file selected by your advanced SSH config); later connections verify it automatically. Cancelling saves nothing, and changed keys block the connection. Ordinary connections need no SSH config file. Passwords and key passphrases stay in memory for the current connection and are never saved in Recent or configuration files. Switching repositories and refreshing reuse connected SSH sessions, so switching back does not ask for the password again. Use the remote entry’s menu to disconnect or reconnect; removing the entry or closing the window also closes its session. After restarting the app, remote entries remain disconnected until opened. Jump hosts can be configured in SSH config and must authenticate independently, such as with keys or an agent. Interactive multi-factor authentication and password changes are not supported.
+
+Remote browsing includes working-tree changes, staged and untracked files, branches, history, search, and image previews. Refresh to read external changes. The lock stays closed; staging, discard, undo/redo, and opening remote files in a local external app are unavailable. No Patchlook installation is needed on the server.
 
 ### Stage changes
 

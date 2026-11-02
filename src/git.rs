@@ -1,16 +1,21 @@
-//! Git access. Arguments are passed directly to Git, never to a shell.
+//! Git access. Local arguments go directly to Git; SSH arguments are POSIX-quoted.
 mod review;
 mod staging;
+mod transport;
 mod undo;
+use crate::ssh_auth::{SshHostVerification, SshSecret};
 use anyhow::{Context, Result, bail, ensure};
 pub use review::{ReviewPatch, merge_working_changes};
 pub use staging::{AccessMode, StageSelection, StagingPatch};
+use std::sync::Arc;
 use std::{
     collections::HashMap,
     io::{BufRead, BufReader},
     path::{Path, PathBuf},
     process::{Command, Output, Stdio},
 };
+use transport::{GitCommand, SshConnection};
+pub use transport::{RepositoryLocation, SshAuthentication, SshConnectionControl, SshOptions};
 pub use undo::{WriteHistory, WriteScope};
 
 pub const HISTORY_PAGE_SIZE: usize = 100;
@@ -20,6 +25,8 @@ pub struct Repository {
     pub root: PathBuf,
     // Immutable for this repository's object format (SHA-1 or SHA-256).
     empty_blob: Vec<u8>,
+    pub location: RepositoryLocation,
+    remote: Option<Arc<SshConnection>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -102,7 +109,7 @@ pub struct HistoryPage {
     pub revision: Option<String>,
 }
 
-fn command(root: &Path) -> Command {
+fn command(root: &Path) -> GitCommand {
     let mut command = Command::new("git");
     command
         .args([
@@ -125,17 +132,15 @@ fn command(root: &Path) -> Command {
         use std::os::windows::process::CommandExt;
         command.creation_flags(0x08000000); // CREATE_NO_WINDOW
     }
-    command
+    GitCommand::local(command)
 }
 
-fn output(command: &mut Command, allow_difference: bool) -> Result<Vec<u8>> {
+fn output(command: &mut GitCommand, allow_difference: bool) -> Result<Vec<u8>> {
     let Output {
         status,
         stdout,
         stderr,
-    } = command
-        .output()
-        .context("Cannot start Git. Install Git and make it available on PATH.")?;
+    } = command.output()?;
     if status.success() || (allow_difference && status.code() == Some(1)) {
         Ok(stdout)
     } else {
@@ -163,24 +168,140 @@ fn path(bytes: &[u8]) -> Result<PathBuf> {
 
 impl Repository {
     pub fn open(directory: &Path) -> Result<Self> {
+        Self::open_location(RepositoryLocation::Local(directory.to_owned()))
+    }
+
+    pub fn open_location(location: RepositoryLocation) -> Result<Self> {
+        Self::open_authenticated(location, None)
+    }
+
+    pub fn open_authenticated(
+        location: RepositoryLocation,
+        secret: Option<SshSecret>,
+    ) -> Result<Self> {
+        Self::open_with_verification(location, secret, None)
+    }
+
+    pub fn open_with_verification(
+        location: RepositoryLocation,
+        secret: Option<SshSecret>,
+        verification: Option<SshHostVerification>,
+    ) -> Result<Self> {
+        Self::open_with_control(
+            location,
+            secret,
+            verification,
+            SshConnectionControl::default(),
+        )
+    }
+
+    pub fn open_with_control(
+        mut location: RepositoryLocation,
+        secret: Option<SshSecret>,
+        verification: Option<SshHostVerification>,
+        control: SshConnectionControl,
+    ) -> Result<Self> {
+        location.validate()?;
+        if let RepositoryLocation::Ssh { options, .. } = &mut location {
+            for file in [&mut options.config_file, &mut options.identity_file]
+                .into_iter()
+                .flatten()
+            {
+                *file = std::path::absolute(&*file).context("Cannot resolve SSH file path")?;
+            }
+        }
+        let remote = match &location {
+            RepositoryLocation::Local(_) => None,
+            RepositoryLocation::Ssh { options, .. } => Some(Arc::new(SshConnection::new(
+                options.clone(),
+                secret,
+                verification,
+                control,
+            )?)),
+        };
         let bytes = output(
-            command(directory).args(["rev-parse", "--show-toplevel"]),
+            command(location.path())
+                .remote(remote.clone())
+                .args(["rev-parse", "--show-toplevel"]),
             false,
         )?;
         let root = path(bytes.strip_suffix(b"\n").unwrap_or(&bytes))?;
+        match &mut location {
+            RepositoryLocation::Local(path) => *path = root.clone(),
+            RepositoryLocation::Ssh { path, .. } => {
+                *path = root
+                    .to_str()
+                    .context("Remote repository path must be UTF-8")?
+                    .to_owned()
+            }
+        }
         let empty_blob = output(
             command(&root)
+                .remote(remote.clone())
                 .args(["hash-object", "--stdin"])
                 .stdin(Stdio::null()),
             false,
         )?
         .trim_ascii_end()
         .to_vec();
-        Ok(Self { root, empty_blob })
+        Ok(Self {
+            root,
+            empty_blob,
+            location,
+            remote,
+        })
+    }
+
+    pub fn disconnect(&self) {
+        if let Some(remote) = &self.remote {
+            remote.control.disconnect();
+        }
+    }
+
+    fn command(&self) -> GitCommand {
+        command(&self.root).remote(self.remote.clone())
+    }
+
+    pub fn is_remote(&self) -> bool {
+        self.remote.is_some()
+    }
+
+    fn null_device(&self) -> &'static str {
+        if self.is_remote() {
+            "/dev/null"
+        } else {
+            null_device()
+        }
+    }
+
+    fn ensure_writable(&self, mode: AccessMode) -> Result<()> {
+        ensure!(!self.is_remote(), "SSH repositories are read-only");
+        ensure!(
+            mode == AccessMode::ReadWrite,
+            "Repository is in read-only mode"
+        );
+        Ok(())
+    }
+
+    pub fn worktree_file(&self, path: &Path) -> Result<Option<Vec<u8>>> {
+        if let Some(remote) = &self.remote {
+            let path = path.to_str().context("Remote paths must be UTF-8")?;
+            return remote.read_file(&format!(
+                "{}/{}",
+                self.root.to_string_lossy().trim_end_matches('/'),
+                path
+            ));
+        }
+        match std::fs::read(self.root.join(path)) {
+            Ok(bytes) => Ok(Some(bytes)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error.into()),
+        }
     }
 
     fn has_head(&self) -> Result<bool> {
-        let result = command(&self.root)
+        let result = self
+            .command()
             .args(["rev-parse", "--verify", "--quiet", "HEAD"])
             .output()?;
         if result.status.success() {
@@ -193,14 +314,15 @@ impl Repository {
     }
 
     pub fn branch_name(&self) -> Result<String> {
-        let branch_result = command(&self.root)
+        let branch_result = self
+            .command()
             .args(["symbolic-ref", "--quiet", "--short", "HEAD"])
             .output()?;
         let branch = if branch_result.status.success() {
             text(branch_result.stdout)?.trim_end().to_owned()
         } else if branch_result.status.code() == Some(1) {
             text(output(
-                command(&self.root).args(["rev-parse", "--short", "HEAD"]),
+                self.command().args(["rev-parse", "--short", "HEAD"]),
                 false,
             )?)?
             .trim_end()
@@ -220,7 +342,7 @@ impl Repository {
 
     pub fn working_changes(&self) -> Result<Vec<Change>> {
         let bytes = output(
-            command(&self.root).args([
+            self.command().args([
                 "status",
                 "--porcelain=v1",
                 "-z",
@@ -234,7 +356,7 @@ impl Repository {
 
     pub fn branches(&self) -> Result<Vec<Branch>> {
         let bytes = output(
-            command(&self.root).args([
+            self.command().args([
                 "for-each-ref",
                 "--sort=refname",
                 "--format=%(refname)%00%(refname:short)%00%(objectname)%00%(HEAD)%00%(symref)",
@@ -286,7 +408,7 @@ impl Repository {
             });
         }
         let revision = text(output(
-            command(&self.root)
+            self.command()
                 .args(["rev-parse", "--verify"])
                 .arg(format!("{}^{{commit}}", revision.unwrap_or("HEAD"))),
             false,
@@ -294,7 +416,7 @@ impl Repository {
         .trim()
         .to_owned();
         let query = query.trim().to_lowercase();
-        let mut cmd = command(&self.root);
+        let mut cmd = self.command();
         cmd.args([
             "log",
             "-z",
@@ -361,8 +483,8 @@ impl Repository {
         parse_numstat(&output(&mut cmd, false)?)
     }
 
-    fn commit_diff_command(&self, commit: &Commit) -> Command {
-        let mut cmd = command(&self.root);
+    fn commit_diff_command(&self, commit: &Commit) -> GitCommand {
+        let mut cmd = self.command();
         if let Some(parent) = commit.parents.first() {
             cmd.args(["diff", parent, &commit.id]);
         } else {
@@ -371,11 +493,11 @@ impl Repository {
         cmd
     }
 
-    fn change_diff_command(&self, change: &Change, commit: Option<&Commit>) -> Command {
+    fn change_diff_command(&self, change: &Change, commit: Option<&Commit>) -> GitCommand {
         let mut cmd = if let Some(commit) = commit {
             self.commit_diff_command(commit)
         } else {
-            command(&self.root)
+            self.command()
         };
         if commit.is_none() {
             cmd.arg("diff");
@@ -463,7 +585,7 @@ impl Repository {
         {
             let mut cmd = self.change_diff_command(change, None);
             cmd.args(["--numstat", "-z", "--no-ext-diff", "--no-textconv", "--"])
-                .arg(null_device())
+                .arg(self.null_device())
                 .arg(&change.path);
             if let Some(lines) = parse_numstat(&output(&mut cmd, true)?)?
                 .into_values()
@@ -498,7 +620,7 @@ impl Repository {
         cmd.arg("--");
         if untracked {
             // Git's no-index mode recognizes the OS null device as an empty file.
-            cmd.arg(null_device());
+            cmd.arg(self.null_device());
         } else if let Some(previous) = &change.previous_path {
             cmd.arg(previous);
         }
@@ -530,16 +652,14 @@ impl Repository {
         } else if change.area == Area::Staged {
             Some(self.index_file(&change.path)?)
         } else {
-            match std::fs::read(self.root.join(&change.path)) {
-                Ok(bytes) => Some(bytes),
-                Err(error)
-                    if change.area == Area::Conflict
-                        && error.kind() == std::io::ErrorKind::NotFound =>
-                {
-                    None
-                }
-                Err(error) => return Err(error).context("Cannot read working-tree image"),
-            }
+            let bytes = self
+                .worktree_file(&change.path)
+                .context("Cannot read working-tree image")?;
+            ensure!(
+                bytes.is_some() || change.area == Area::Conflict,
+                "Working-tree image no longer exists"
+            );
+            bytes
         };
         Ok(FileVersions { original, modified })
     }
@@ -547,15 +667,12 @@ impl Repository {
     fn index_file(&self, path: &Path) -> Result<Vec<u8>> {
         let mut object = std::ffi::OsString::from(":");
         object.push(path);
-        output(
-            command(&self.root).args(["cat-file", "blob"]).arg(object),
-            false,
-        )
+        output(self.command().args(["cat-file", "blob"]).arg(object), false)
     }
 
     fn tree_file(&self, revision: &str, path: &Path) -> Result<Option<Vec<u8>>> {
         let entry = output(
-            command(&self.root)
+            self.command()
                 .args(["ls-tree", "-z", revision, "--"])
                 .arg(path),
             false,
@@ -568,11 +685,7 @@ impl Repository {
             .split_whitespace()
             .nth(2)
             .context("Missing Git object ID")?;
-        output(
-            command(&self.root).args(["cat-file", "blob", object]),
-            false,
-        )
-        .map(Some)
+        output(self.command().args(["cat-file", "blob", object]), false).map(Some)
     }
 }
 
