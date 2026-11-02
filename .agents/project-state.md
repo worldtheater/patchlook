@@ -36,7 +36,6 @@
 - About、多语言、图标、MIT 与文件图标许可随包分发；中英文 README 有真实浅／暗色截图及暂存／恢复说明。
 
 ### In Progress
-- [active] 更新 v0.1.6 草稿：移除分支行尾重复箭头及闲置文案，保留整行点击与眼睛标记；导航／多语言回归、Release 构建通过，预览已启动。下一步确认草稿状态，提交并更新标签，核对重建的正式签名公证包与草稿附件。
 - [paused] 提交说明局部高亮及实时拖选：用户决定等待 Kit Base 上游支持。当前 SelectableText 缺局部高亮 API，拖选变化未触发重绘；列表高亮已完成。
 
 ### Next
@@ -49,7 +48,7 @@
 暂无。
 
 ## Verification
-- 待发布的 [v0.1.6 正式草稿](https://github.com/worldtheater/patchlook/releases/tag/untagged-b7209fb596dc3daa26d2) 对应版本提交 `a60786d` 与标签 `v0.1.6`；[正式构建 41424063534](https://github.com/worldtheater/patchlook/actions/runs/41424063534) 三平台检查、测试、构建及发布任务全部成功。英文说明已保存，macOS DMG／ZIP、Windows ZIP、Linux tar.gz 四个附件与标签构建产物的 SHA-256 一致。实际下载的 macOS app／DMG 已验证 Developer ID 签名、Hardened Runtime、公证票据和 Gatekeeper 接受；Windows EXE 的 SSH worker 保持 LF。草稿尚未公开发布。
+- 待发布的 [v0.1.6 正式草稿](https://github.com/worldtheater/patchlook/releases/tag/untagged-44eb85f1342f8dc8f7b6) 已更新至 `96e3530`（标签 `v0.1.6`），包含分支行尾箭头移除及精简后的中英文 README；[正式构建 41443213925](https://github.com/worldtheater/patchlook/actions/runs/41443213925) 三平台检查、测试、构建及发布任务全部成功。英文说明保留并补充分支入口简化，四个正式附件已替换且 SHA-256 与新标签产物一致。实际下载的 macOS app／DMG 已验证 Developer ID 签名、Hardened Runtime、公证票据和 Gatekeeper 接受；Windows EXE 的 SSH worker 保持 LF。草稿保持未发布。
 - macOS 已通过 fmt、Clippy、常规串行 Rust 回归、Docker SSH／界面测试、Python 打包测试及 Release 构建；SSH 功能本地检查及 Windows 云端检查／打包已完成。SSH 覆盖密码／普通及加密私钥、主机信任及变更拒绝、凭据隔离、表单／历史／启动恢复、特殊路径／二进制／图片／分页、取消及断线重连、跨仓库复用、后台断开、窗口清理和远程写入拦截。用户已确认 macOS 经局域网连接 Windows WSL Ubuntu SSH 可用；用户也已确认 Windows 客户端 SSH 连接可用；Linux 客户端与网络延迟未实机验收。真实 Git 提交树／字节回归覆盖部分暂存、第三版本、目录／改名／二进制、CRLF、丢弃恢复、意向添加、SHA-1／SHA-256，撤销检查权限及外部冲突。遮罩动画在固定 fork revision 下构建，视觉效果由用户验收。
 - 当前优化将普通部分暂存块的 Git 调用由 18 次降至 12 次（首次暂存 17 → 11）；同一行内／并排按钮样例，本机 macOS 调用链中位数约 183 → 116 ms，不代表 Windows 耗时。52 文件／37 二进制样例及文本／空文件／重命名／第三版本计数均与 Git 对照一致。写入前过期校验、写入后快照、撤销外部冲突检查保留。代码 `52ebf84` 已推送并纳入 v0.1.5 正式版；用户测试仓库和运行中的预览未改动。Windows 实际响应和视觉效果由用户验收。
 - 最新正式版 [v0.1.5](https://github.com/worldtheater/patchlook/releases/tag/v0.1.5)（`52ebf84`，运行 `41095790193`）已于 2026-10-31 发布为 Latest；三平台检查、测试、构建成功，四个附件及摘要核对一致；macOS Developer ID、Hardened Runtime、app／DMG 公证票据和 Gatekeeper 验证通过。
