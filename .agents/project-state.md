@@ -17,6 +17,7 @@
 - `.github/workflows/desktop.yml` 在 main／PR 三平台检查及开发打包；匹配 Cargo 版本的 v 标签执行 macOS Developer ID 签名、公证、票据验证，三平台成功后创建 Release 草稿。`scripts/package.py` 默认 ad-hoc，正式签名失败不降级；手动输入 Apple submission ID 时仅查询既有公证。
 
 ## Project Conventions
+- `.gitattributes` 强制 shell 脚本使用 LF；SSH worker 经 `include_str!` 原样嵌入，不能随 Windows 检出转换为 CRLF。所有平台运行嵌入脚本换行回归。
 - GPUI 统一从 `gpui_kit` 导入，复用控件与主题；九语言 `locales/*.json` 键及占位符一致。Kit 0.8.0 固定 fork revision `907fa984b7a1f316fc767ccf3e25c10b54932518`，已推送；维护 Cargo.lock，不提交本机 path override；升级见 `docs/development.md`。
 - Git 底层未暂存为索引对工作区，已暂存为 HEAD 对索引；根提交按新增，合并提交比较第一父提交。历史／搜索固定首次解析的分支 tip；关键词匹配完整说明子串（忽略大小写）或 SHA 前缀，流式扫描，每页 100 条加一条前瞻。
 - 界面测试共享进程级 locale，CI 与本地均串行运行测试，避免跨用例干扰。常规检查：`cargo fmt --all -- --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked -- --test-threads=1`；构建变更另跑 Release；打包测试用 Python 3.11+ 执行 `python -m unittest discover -s scripts -p 'test_*.py'`。
@@ -35,6 +36,7 @@
 - About、多语言、图标、MIT 与文件图标许可随包分发；中英文 README 有真实浅／暗色截图及暂存／恢复说明。
 
 ### In Progress
+- [active] Windows SSH 换行修复包：旧测试包 `c0660a8` 嵌入 CRLF worker，Linux `sh` 在 `set -u` 退出；已固定 shell 的 LF 属性并补跨平台回归。下一步提交后核对新 Windows 产物内脚本并交付；不改服务器配置。
 - [paused] 提交说明局部高亮及实时拖选：用户决定等待 Kit Base 上游支持。当前 SelectableText 缺局部高亮 API，拖选变化未触发重绘；列表高亮已完成。
 
 ### Next
@@ -47,7 +49,7 @@
 暂无。
 
 ## Verification
-- SSH 功能提交 `da580ad` 及稳定标题栏点击测试 `c0660a8` 已推送；[Desktop 运行 41416234940](https://github.com/worldtheater/patchlook/actions/runs/41416234940) 三平台检查、测试、Release 构建及打包通过。Windows x64 测试附件 `13128397646` 对应 `c0660a8`，已下载验证归档完整性、SHA-256 和 PE 架构；内包 `patchlook-0.1.5-windows-amd64.zip`（12,319,019 字节）SHA-256 `3f0255bb15fc437d7eb04a3587e5f38c74093e7fc6399e00fcb3c86d75d044bb`。这是测试包，未创建标签或新 Release；Windows 客户端实际 SSH 登录仍待用户验收。
+- Windows 首个 SSH 测试包 `c0660a8` 虽通过 CI，但用户实测连接失败；已从 EXE 确认嵌入 CRLF，并在 Linux fixture 复现同样的 `set: Illegal option`。修复后模拟 `core.autocrlf=true` 检出仍为 LF；新增回归已验证 CRLF 失败／LF 通过，transport 测试及真实 SSH 只读浏览回归通过。新 Windows 包待交付，客户端实际登录仍需复测。
 - macOS 已通过 fmt、Clippy、常规串行 Rust 回归、Docker SSH／界面测试、Python 打包测试及 Release 构建；SSH 功能本地检查及 Windows 云端检查／打包已完成。SSH 覆盖密码／普通及加密私钥、主机信任及变更拒绝、凭据隔离、表单／历史／启动恢复、特殊路径／二进制／图片／分页、取消及断线重连、跨仓库复用、后台断开、窗口清理和远程写入拦截。用户已确认 macOS 经局域网连接 Windows WSL Ubuntu SSH 可用；Windows／Linux 客户端与网络延迟未实机验收。真实 Git 提交树／字节回归覆盖部分暂存、第三版本、目录／改名／二进制、CRLF、丢弃恢复、意向添加、SHA-1／SHA-256，撤销检查权限及外部冲突。遮罩动画在固定 fork revision 下构建，视觉效果由用户验收。
 - 当前优化将普通部分暂存块的 Git 调用由 18 次降至 12 次（首次暂存 17 → 11）；同一行内／并排按钮样例，本机 macOS 调用链中位数约 183 → 116 ms，不代表 Windows 耗时。52 文件／37 二进制样例及文本／空文件／重命名／第三版本计数均与 Git 对照一致。写入前过期校验、写入后快照、撤销外部冲突检查保留。代码 `52ebf84` 已推送并纳入 v0.1.5 正式版；用户测试仓库和运行中的预览未改动。Windows 实际响应和视觉效果由用户验收。
 - 最新正式版 [v0.1.5](https://github.com/worldtheater/patchlook/releases/tag/v0.1.5)（`52ebf84`，运行 `41095790193`）已于 2026-10-31 发布为 Latest；三平台检查、测试、构建成功，四个附件及摘要核对一致；macOS Developer ID、Hardened Runtime、app／DMG 公证票据和 Gatekeeper 验证通过。

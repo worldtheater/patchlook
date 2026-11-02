@@ -668,6 +668,14 @@ impl Drop for SshProcess {
 mod tests {
     use super::*;
 
+    #[test]
+    fn embedded_ssh_worker_has_posix_line_endings() {
+        assert!(
+            !include_str!("ssh_worker.sh").contains('\r'),
+            "The embedded SSH worker must use LF line endings, including in Windows builds"
+        );
+    }
+
     #[cfg(unix)]
     #[test]
     fn disconnect_terminates_blocked_reads_and_prevents_late_processes() {

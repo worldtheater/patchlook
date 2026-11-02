@@ -1,0 +1,2 @@
+# Shell scripts run on Linux, including the SSH worker embedded in the executable.
+*.sh text eol=lf
