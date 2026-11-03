@@ -134,17 +134,22 @@ figcaption svg { width: 13px; height: 13px; }
 .requirements { margin: 0; font-size: 15px; }
 .download-detail { margin: 5px 0 22px; font-size: 12px; color: var(--muted); }
 .platform-download { width: 100%; min-height: 46px; font-size: 14px; }
+.checksum { margin-top: 12px; color: var(--muted); text-align: left; }
+.checksum-row { display: flex; align-items: center; gap: 8px; font-size: 11px; }
+.checksum-row > span { flex-shrink: 0; white-space: nowrap; }
+.checksum code { flex: 1; min-width: 0; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 11px; line-height: 1.6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; user-select: all; }
+.checksum .copy-button { min-width: 26px; height: 26px; padding: 5px; color: var(--muted); }
 .homebrew-install { margin-top: 24px; }
 .homebrew-label { margin: 0 0 10px; color: var(--muted); font-size: 12px; }
 .homebrew-label a:hover { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
 .command-line { display: flex; align-items: center; gap: 8px; padding: 7px 9px 7px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--page); text-align: left; }
 .command-line code { flex: 1; min-width: 0; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; overflow-wrap: anywhere; user-select: all; }
-.copy-command { flex-shrink: 0; }
-.copy-command svg { width: 16px; height: 16px; }
-.copy-command .tick, .copy-command[data-copied="true"] .copy { display: none; }
-.copy-command[data-copied="true"] .tick { display: block; }
-.command-feedback { margin: 8px 0 0; font-size: 12px; color: var(--muted); }
-.command-feedback:empty { display: none; }
+.copy-button { flex-shrink: 0; }
+.copy-button svg { width: 16px; height: 16px; }
+.copy-button .tick, .copy-button[data-copied="true"] .copy { display: none; }
+.copy-button[data-copied="true"] .tick { display: block; }
+.copy-feedback { margin: 8px 0 0; font-size: 12px; color: var(--muted); }
+.copy-feedback:empty { display: none; }
 .download-links { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px 16px; margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
 .download-links a { display: inline-flex; align-items: center; gap: 5px; }
 .download-links a:hover { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
@@ -197,7 +202,7 @@ figcaption svg { width: 13px; height: 13px; }
   .requirements { font-size: 14px; }
   .command-line { gap: 6px; padding-inline: 10px 8px; }
   .command-line code { font-size: 11px; }
-  .copy-command { min-width: 28px; height: 28px; padding: 6px; }
+  .copy-button { min-width: 28px; height: 28px; padding: 6px; }
   .site-footer { align-items: start; flex-direction: column; gap: 18px; padding-block: 28px; }
 }
 @media (prefers-reduced-motion: reduce) {

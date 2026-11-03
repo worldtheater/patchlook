@@ -44,7 +44,6 @@
   "source": "源代码",
   "brew_title": "或通过 Homebrew 安装",
   "brew_copy": "复制安装命令",
-  "brew_copied": "已复制",
   "brew_copy_error": "请选择命令并手动复制。",
   "download_platform": "平台",
   "close_download": "关闭下载窗口",
@@ -58,5 +57,8 @@
   "faq_staging_question": "Patchlook 会修改文件或创建提交吗？",
   "faq_staging_answer": "Patchlook 默认只读。解锁本地仓库的读写模式后，可按文件或改动块暂存、取消暂存，也可丢弃不需要的改动块。暂存和丢弃操作可以在当前仓库会话内撤销。提交、切换工作区分支和推送仍通过你常用的 Git 工具完成。",
   "faq_ssh_question": "能直接浏览远程仓库，不克隆到本地吗？",
-  "faq_ssh_answer": "可以。Patchlook 通过 SSH 连接 Linux 服务器，支持密码、私钥和 SSH agent。服务器需要 Git，无需安装 Patchlook。远程浏览始终只读，密码和私钥密码不会保存。"
+  "faq_ssh_answer": "可以。Patchlook 通过 SSH 连接 Linux 服务器，支持密码、私钥和 SSH agent。服务器需要 Git，无需安装 Patchlook。远程浏览始终只读，密码和私钥密码不会保存。",
+  "copied": "已复制",
+  "checksum_copy": "复制 SHA-256",
+  "checksum_copy_error": "请选择校验值并手动复制。"
 }

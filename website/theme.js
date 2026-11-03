@@ -92,17 +92,17 @@
       backdropPressed = false;
     });
 
-    const copyButton = document.querySelector('.copy-command');
-    if (navigator.clipboard?.writeText) {
+    document.querySelectorAll('[data-copy-target]').forEach(copyButton => {
+      if (!navigator.clipboard?.writeText) return;
       copyButton.hidden = false;
       const label = copyButton.getAttribute('aria-label');
       const copiedLabel = copyButton.dataset.copiedLabel;
-      const feedback = document.querySelector('.command-feedback');
+      const feedback = copyButton.closest('[data-copy-value]').querySelector('.copy-feedback');
       let resetCopy;
       copyButton.addEventListener('click', async () => {
         clearTimeout(resetCopy);
         try {
-          await navigator.clipboard.writeText(document.querySelector('#brew-command').textContent);
+          await navigator.clipboard.writeText(document.getElementById(copyButton.dataset.copyTarget).textContent);
           copyButton.dataset.copied = 'true';
           copyButton.setAttribute('aria-label', copiedLabel);
           copyButton.title = copiedLabel;
@@ -116,7 +116,7 @@
           copyButton.title = label;
         }, 2000);
       });
-    }
+    });
 
     menus.forEach(menu => {
       menu.addEventListener('toggle', () => {

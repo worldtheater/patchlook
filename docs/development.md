@@ -6,7 +6,11 @@
 
 The GitHub Pages homepage lives in `website/`: one HTML template, shared CSS,
 copy in all nine app languages, and shared menu, theme, platform-switching, and command-copy controls. The Python builder reuses the app
-logo and README screenshot and takes download links from a published GitHub release.
+logo and README screenshot and takes download links and SHA-256 checksums from the
+same assets in a published GitHub release. The download dialog shows SHA-256, the
+hash, and a copy button in one row. Narrow screens truncate the displayed hash;
+copying always includes the full value. A missing or malformed asset
+digest fails the build, so a new page cannot publish an empty or guessed checksum.
 No frontend dependencies are required.
 
 ```sh

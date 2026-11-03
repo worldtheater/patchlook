@@ -44,7 +44,6 @@
   "source": "Code source",
   "brew_title": "Ou installer avec Homebrew",
   "brew_copy": "Copier la commande d’installation",
-  "brew_copied": "Copié",
   "brew_copy_error": "Sélectionnez la commande et copiez-la manuellement.",
   "download_platform": "Plateforme",
   "close_download": "Fermer les téléchargements",
@@ -58,5 +57,8 @@
   "faq_staging_question": "Patchlook peut-il modifier des fichiers ou créer des commits ?",
   "faq_staging_answer": "Patchlook démarre en lecture seule. Le mode lecture/écriture des dépôts locaux permet d’indexer ou de désindexer des fichiers et blocs de modifications, ou d’abandonner un bloc. Ces opérations peuvent être annulées pendant la session du dépôt. Les commits, changements de branche et envois restent dans vos outils Git habituels.",
   "faq_ssh_question": "Peut-on consulter un dépôt distant sans le cloner ?",
-  "faq_ssh_answer": "Oui. Patchlook se connecte aux serveurs Linux par SSH avec un mot de passe, une clé privée ou un agent SSH. Le serveur doit disposer de Git, mais pas de Patchlook. La consultation distante reste en lecture seule. Les mots de passe et phrases secrètes ne sont pas enregistrés."
+  "faq_ssh_answer": "Oui. Patchlook se connecte aux serveurs Linux par SSH avec un mot de passe, une clé privée ou un agent SSH. Le serveur doit disposer de Git, mais pas de Patchlook. La consultation distante reste en lecture seule. Les mots de passe et phrases secrètes ne sont pas enregistrés.",
+  "copied": "Copié",
+  "checksum_copy": "Copier le SHA-256",
+  "checksum_copy_error": "Sélectionnez l’empreinte et copiez-la manuellement."
 }

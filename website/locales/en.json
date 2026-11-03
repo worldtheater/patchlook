@@ -44,7 +44,6 @@
   "source": "Source code",
   "brew_title": "Or install with Homebrew",
   "brew_copy": "Copy install command",
-  "brew_copied": "Copied",
   "brew_copy_error": "Select the command and copy it manually.",
   "download_platform": "Platform",
   "close_download": "Close downloads",
@@ -58,5 +57,8 @@
   "faq_staging_question": "Can Patchlook change files or create commits?",
   "faq_staging_answer": "Patchlook starts read-only. Unlock read/write mode for local repositories to stage or unstage files and change blocks, or discard an unwanted block. Staging and discard operations can be undone in the current repository session. Commit, checkout, and push remain in your usual Git tools.",
   "faq_ssh_question": "Can I browse a remote repository without cloning it?",
-  "faq_ssh_answer": "Yes. Patchlook connects to Linux servers over SSH using a password, private key, or SSH agent. The server needs Git, but not Patchlook. Remote browsing is always read-only. Passwords and key passphrases are not saved."
+  "faq_ssh_answer": "Yes. Patchlook connects to Linux servers over SSH using a password, private key, or SSH agent. The server needs Git, but not Patchlook. Remote browsing is always read-only. Passwords and key passphrases are not saved.",
+  "copied": "Copied",
+  "checksum_copy": "Copy SHA-256",
+  "checksum_copy_error": "Select the hash and copy it manually."
 }

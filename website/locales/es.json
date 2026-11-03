@@ -44,7 +44,6 @@
   "source": "Código fuente",
   "brew_title": "O instala con Homebrew",
   "brew_copy": "Copiar comando de instalación",
-  "brew_copied": "Copiado",
   "brew_copy_error": "Selecciona el comando y cópialo manualmente.",
   "download_platform": "Plataforma",
   "close_download": "Cerrar descargas",
@@ -58,5 +57,8 @@
   "faq_staging_question": "¿Puede Patchlook modificar archivos o crear commits?",
   "faq_staging_answer": "Patchlook se inicia en modo de solo lectura. El modo de lectura/escritura permite preparar o retirar archivos y bloques de cambios de repositorios locales, o descartar un bloque. Estas operaciones se pueden deshacer durante la sesión del repositorio. Los commits, cambios de rama y envíos se realizan con tus herramientas Git habituales.",
   "faq_ssh_question": "¿Puedo explorar un repositorio remoto sin clonarlo?",
-  "faq_ssh_answer": "Sí. Patchlook se conecta a servidores Linux por SSH con contraseña, clave privada o agente SSH. El servidor necesita Git, pero no Patchlook. La exploración remota es siempre de solo lectura. No se guardan contraseñas ni frases de paso."
+  "faq_ssh_answer": "Sí. Patchlook se conecta a servidores Linux por SSH con contraseña, clave privada o agente SSH. El servidor necesita Git, pero no Patchlook. La exploración remota es siempre de solo lectura. No se guardan contraseñas ni frases de paso.",
+  "copied": "Copiado",
+  "checksum_copy": "Copiar SHA-256",
+  "checksum_copy_error": "Selecciona el hash y cópialo manualmente."
 }

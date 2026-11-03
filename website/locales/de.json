@@ -44,7 +44,6 @@
   "source": "Quellcode",
   "brew_title": "Oder mit Homebrew installieren",
   "brew_copy": "Installationsbefehl kopieren",
-  "brew_copied": "Kopiert",
   "brew_copy_error": "Wählen Sie den Befehl aus und kopieren Sie ihn manuell.",
   "download_platform": "Plattform",
   "close_download": "Downloads schließen",
@@ -58,5 +57,8 @@
   "faq_staging_question": "Kann Patchlook Dateien ändern oder Commits erstellen?",
   "faq_staging_answer": "Patchlook startet schreibgeschützt. Im Lese-/Schreibmodus für lokale Repositories können Sie Dateien oder Änderungsblöcke zum Index hinzufügen, daraus entfernen oder einen Block verwerfen. Diese Vorgänge lassen sich in der aktuellen Repository-Sitzung rückgängig machen. Commit, Checkout und Push bleiben in Ihren gewohnten Git-Werkzeugen.",
   "faq_ssh_question": "Kann ich ein Remote-Repository ohne Klonen ansehen?",
-  "faq_ssh_answer": "Ja. Patchlook verbindet sich per SSH mit Linux-Servern, über Passwort, privaten Schlüssel oder SSH-Agent. Auf dem Server wird Git benötigt, aber kein Patchlook. Remote-Repositories bleiben schreibgeschützt. Passwörter und Schlüssel-Passphrasen werden nicht gespeichert."
+  "faq_ssh_answer": "Ja. Patchlook verbindet sich per SSH mit Linux-Servern, über Passwort, privaten Schlüssel oder SSH-Agent. Auf dem Server wird Git benötigt, aber kein Patchlook. Remote-Repositories bleiben schreibgeschützt. Passwörter und Schlüssel-Passphrasen werden nicht gespeichert.",
+  "copied": "Kopiert",
+  "checksum_copy": "SHA-256 kopieren",
+  "checksum_copy_error": "Wählen Sie den Hash aus und kopieren Sie ihn manuell."
 }

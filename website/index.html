@@ -128,21 +128,33 @@
           <h3 class="platform-name">macOS</h3>
           <p class="requirements">$mac_requirements</p><p class="download-detail">$mac_detail</p>
           <a class="button primary platform-download" href="$mac_url" aria-label="macOS: $mac_download">$download_icon<span>$mac_download</span></a>
-          <div class="homebrew-install">
+          <div class="checksum" data-copy-value>
+            <div class="checksum-row"><span>SHA-256</span><code id="mac-sha256" title="$mac_sha256">$mac_sha256</code><button class="icon-button copy-button" type="button" aria-label="$checksum_copy" title="$checksum_copy" data-copy-target="mac-sha256" data-copied-label="$copied" data-error="$checksum_copy_error" hidden>$copy_icon$tick_icon</button></div>
+            <p class="copy-feedback" role="status" aria-live="polite"></p>
+          </div>
+          <div class="homebrew-install" data-copy-value>
             <p class="homebrew-label"><a href="$homebrew_url">$brew_title</a></p>
-            <div class="command-line"><code id="brew-command">$brew_install_command</code><button class="icon-button copy-command" type="button" aria-label="$brew_copy" title="$brew_copy" data-copied-label="$brew_copied" data-error="$brew_copy_error" hidden>$copy_icon$tick_icon</button></div>
-            <p class="command-feedback" role="status" aria-live="polite"></p>
+            <div class="command-line"><code id="brew-command">$brew_install_command</code><button class="icon-button copy-button" type="button" aria-label="$brew_copy" title="$brew_copy" data-copy-target="brew-command" data-copied-label="$copied" data-error="$brew_copy_error" hidden>$copy_icon$tick_icon</button></div>
+            <p class="copy-feedback" role="status" aria-live="polite"></p>
           </div>
         </article>
         <article id="download-windows" class="download-panel" data-platform-panel="windows">
           <h3 class="platform-name">Windows</h3>
           <p class="requirements">$windows_requirements</p><p class="download-detail">$windows_detail</p>
           <a class="button primary platform-download" href="$windows_url" aria-label="Windows: $windows_download">$download_icon<span>$windows_download</span></a>
+          <div class="checksum" data-copy-value>
+            <div class="checksum-row"><span>SHA-256</span><code id="windows-sha256" title="$windows_sha256">$windows_sha256</code><button class="icon-button copy-button" type="button" aria-label="$checksum_copy" title="$checksum_copy" data-copy-target="windows-sha256" data-copied-label="$copied" data-error="$checksum_copy_error" hidden>$copy_icon$tick_icon</button></div>
+            <p class="copy-feedback" role="status" aria-live="polite"></p>
+          </div>
         </article>
         <article id="download-linux" class="download-panel" data-platform-panel="linux">
           <h3 class="platform-name">Linux</h3>
           <p class="requirements">$linux_requirements</p><p class="download-detail">$linux_detail</p>
           <a class="button primary platform-download" href="$linux_url" aria-label="Linux: $linux_download">$download_icon<span>$linux_download</span></a>
+          <div class="checksum" data-copy-value>
+            <div class="checksum-row"><span>SHA-256</span><code id="linux-sha256" title="$linux_sha256">$linux_sha256</code><button class="icon-button copy-button" type="button" aria-label="$checksum_copy" title="$checksum_copy" data-copy-target="linux-sha256" data-copied-label="$copied" data-error="$checksum_copy_error" hidden>$copy_icon$tick_icon</button></div>
+            <p class="copy-feedback" role="status" aria-live="polite"></p>
+          </div>
         </article>
       </div>
     </div>

@@ -1,3 +1,4 @@
+import hashlib
 import json
 from html.parser import HTMLParser
 from pathlib import Path
@@ -23,9 +24,17 @@ class Links(HTMLParser):
         self.schemas = []
         self.text = []
         self._json = None
+        self.code_values = {}
+        self.copy_targets = []
+        self._code_id = None
 
     def handle_starttag(self, tag, attributes):
         attrs = dict(attributes)
+        if tag == "code" and "id" in attrs:
+            self._code_id = attrs["id"]
+            self.code_values[self._code_id] = ""
+        if "data-copy-target" in attrs:
+            self.copy_targets.append(attrs["data-copy-target"])
         if "id" in attrs:
             self.ids.add(attrs["id"])
         if tag == "script" and attrs.get("type") == "application/ld+json":
@@ -50,12 +59,16 @@ class Links(HTMLParser):
                 self.local.append(value)
 
     def handle_data(self, data):
+        if self._code_id is not None:
+            self.code_values[self._code_id] += data
         if self._json is not None:
             self._json += data
         else:
             self.text.append(data)
 
     def handle_endtag(self, tag):
+        if tag == "code":
+            self._code_id = None
         if tag == "script" and self._json is not None:
             self.schemas.append(json.loads(self._json))
             self._json = None
@@ -71,6 +84,7 @@ class HomepageTests(unittest.TestCase):
             "assets": [{
                 "name": "patchlook-9.8.7" + suffix,
                 "browser_download_url": self.repository + "/releases/download/v9.8.7/patchlook-9.8.7" + suffix,
+                "digest": "sha256:" + hashlib.sha256(suffix.encode()).hexdigest(),
             } for suffix in ASSET_SUFFIXES.values()],
         }
 
@@ -96,6 +110,10 @@ class HomepageTests(unittest.TestCase):
                 self.assertIn(f"{self.repository}/blob/main/{readme}", markup)
                 self.assertIn(f'brew install --cask {self.config["homebrew_cask"]}', markup)
                 self.assertNotIn('brew upgrade', markup)
+                for platform, suffix in ASSET_SUFFIXES.items():
+                    self.assertEqual(parsed.code_values[f"{platform}-sha256"], hashlib.sha256(suffix.encode()).hexdigest())
+                self.assertEqual(set(parsed.copy_targets), set(parsed.code_values))
+                self.assertEqual(len(parsed.copy_targets), 4)
                 for value in parsed.local:
                     target = page.parent / unquote(urlparse(value).path)
                     self.assertTrue(target.exists(), str(target))
@@ -198,6 +216,33 @@ class HomepageTests(unittest.TestCase):
             release_links({**self.release, "assets": self.release["assets"][:2]}, self.repository)
         with self.assertRaises(ValueError):
             release_links({**self.release, "html_url": "https://example.org/release"}, self.repository)
+
+    def test_checksum_comes_from_the_exact_download_asset(self):
+        extra_zip = {
+            "name": "patchlook-9.8.7-darwin-arm64.zip",
+            "browser_download_url": self.repository + "/releases/download/v9.8.7/patchlook-9.8.7-darwin-arm64.zip",
+            "digest": "sha256:" + "f" * 64,
+        }
+        assets = [extra_zip, *reversed(self.release["assets"])]
+        # Accept hexadecimal case, but display a consistent lowercase hash.
+        assets[1] = {**assets[1], "digest": "sha256:" + assets[1]["digest"][7:].upper()}
+        links = release_links({**self.release, "assets": assets}, self.repository)
+        for platform, suffix in ASSET_SUFFIXES.items():
+            self.assertTrue(links[f"{platform}_url"].endswith(suffix))
+            self.assertEqual(links[f"{platform}_sha256"], hashlib.sha256(suffix.encode()).hexdigest())
+
+    def test_rejects_missing_or_malformed_sha256_for_any_download(self):
+        invalid_digests = (None, "", "sha256:" + "a" * 63, "sha256:" + "a" * 65,
+                           "sha256:" + "g" * 64, "sha512:" + "a" * 64, "sha256:" + "a" * 64 + "\n")
+        for index in range(len(self.release["assets"])):
+            for digest in invalid_digests:
+                with self.subTest(platform=index, digest=digest), self.assertRaisesRegex(ValueError, "SHA-256"):
+                    assets = [asset.copy() for asset in self.release["assets"]]
+                    if digest is None:
+                        assets[index].pop("digest")
+                    else:
+                        assets[index]["digest"] = digest
+                    release_links({**self.release, "assets": assets}, self.repository)
 
 
 if __name__ == "__main__":

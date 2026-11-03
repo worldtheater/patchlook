@@ -4,6 +4,7 @@ import argparse
 import html
 import json
 from pathlib import Path
+import re
 import shutil
 from string import Template
 from urllib.parse import urlparse
@@ -57,10 +58,15 @@ def release_links(release, repository):
         assets = [asset for asset in release["assets"] if asset["name"].endswith(suffix)]
         if len(assets) != 1:
             raise ValueError(f"Expected one {platform} release asset, got {len(assets)}")
-        url = assets[0]["browser_download_url"]
+        asset = assets[0]
+        url = asset["browser_download_url"]
         if not url.startswith(repository + "/releases/download/"):
             raise ValueError(f"Unexpected download URL for {platform}")
         result[f"{platform}_url"] = url
+        digest = asset.get("digest")
+        if not isinstance(digest, str) or not re.fullmatch(r"sha256:[0-9a-fA-F]{64}", digest):
+            raise ValueError(f'Missing or invalid SHA-256 for {asset["name"]}')
+        result[f"{platform}_sha256"] = digest.removeprefix("sha256:").lower()
     return result
 
 

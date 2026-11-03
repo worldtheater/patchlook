@@ -44,7 +44,6 @@
   "source": "原始碼",
   "brew_title": "或透過 Homebrew 安裝",
   "brew_copy": "複製安裝指令",
-  "brew_copied": "已複製",
   "brew_copy_error": "請選取指令並手動複製。",
   "download_platform": "平台",
   "close_download": "關閉下載視窗",
@@ -58,5 +57,8 @@
   "faq_staging_question": "Patchlook 會修改檔案或建立提交嗎？",
   "faq_staging_answer": "Patchlook 預設唯讀。解鎖本機儲存庫的讀寫模式後，可依檔案或變更區塊暫存、取消暫存，也可捨棄不需要的變更區塊。暫存和捨棄操作可在目前的儲存庫工作階段內復原。提交、切換工作區分支和推送仍透過你慣用的 Git 工具完成。",
   "faq_ssh_question": "能直接瀏覽遠端儲存庫，不複製到本機嗎？",
-  "faq_ssh_answer": "可以。Patchlook 透過 SSH 連接 Linux 伺服器，支援密碼、私鑰和 SSH agent。伺服器需要 Git，無需安裝 Patchlook。遠端瀏覽一律唯讀，密碼和私鑰密碼不會儲存。"
+  "faq_ssh_answer": "可以。Patchlook 透過 SSH 連接 Linux 伺服器，支援密碼、私鑰和 SSH agent。伺服器需要 Git，無需安裝 Patchlook。遠端瀏覽一律唯讀，密碼和私鑰密碼不會儲存。",
+  "copied": "已複製",
+  "checksum_copy": "複製 SHA-256",
+  "checksum_copy_error": "請選取校驗值並手動複製。"
 }
