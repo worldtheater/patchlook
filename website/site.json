@@ -1,0 +1,18 @@
+{
+  "name": "Patchlook",
+  "repository": "https://github.com/worldtheater/patchlook",
+  "url": "https://worldtheater.github.io/patchlook",
+  "homebrew_cask": "worldtheater/tap/patchlook",
+  "homebrew_url": "https://github.com/worldtheater/homebrew-tap",
+  "languages": {
+    "en": "",
+    "zh-CN": "zh",
+    "zh-TW": "zh-tw",
+    "ja": "ja",
+    "ko": "ko",
+    "fr": "fr",
+    "de": "de",
+    "es": "es",
+    "pt-BR": "pt-br"
+  }
+}

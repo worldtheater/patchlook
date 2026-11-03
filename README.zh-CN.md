@@ -32,6 +32,14 @@
 
 ## 安装
 
+macOS（Apple Silicon、macOS 15 及以上）可以通过 [Homebrew](https://github.com/worldtheater/homebrew-tap) 安装：
+
+```sh
+brew install --cask worldtheater/tap/patchlook
+```
+
+Git 会自动安装。后续运行 `brew update && brew upgrade --cask patchlook` 升级。如果之前手动安装过，请先退出应用，将现有的 `Patchlook.app` 移出「应用程序」目录；偏好设置会保留。
+
 前往 [Releases](https://github.com/worldtheater/patchlook/releases) 下载已发布的安装包，也可以[从源码构建](#从源码构建)。
 
 | 平台 | 系统要求 | 安装方式 |

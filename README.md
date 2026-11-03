@@ -32,6 +32,14 @@ Review changes, explore history, and compare file versions in local repositories
 
 ## Install
 
+On macOS (Apple Silicon, macOS 15+), install with [Homebrew](https://github.com/worldtheater/homebrew-tap):
+
+```sh
+brew install --cask worldtheater/tap/patchlook
+```
+
+Git is installed automatically. Upgrade with `brew update && brew upgrade --cask patchlook`. If you previously installed the app manually, quit it and move the existing `Patchlook.app` out of Applications first; your preferences are kept.
+
 Browse [Releases](https://github.com/worldtheater/patchlook/releases) for published builds, or [build from source](#build-from-source).
 
 | Platform | Requirements | Installation |

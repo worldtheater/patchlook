@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="$lang">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>$title</title>
+  <meta name="description" content="$description">
+  <meta name="robots" content="index, follow, max-image-preview:large">
+  <link rel="canonical" href="$canonical">
+  $alternate_links
+  <link rel="alternate" hreflang="x-default" href="$site_url/">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Patchlook">
+  <meta property="og:locale" content="$og_locale">
+  $og_alternate_locales
+  <meta property="og:title" content="$title">
+  <meta property="og:description" content="$description">
+  <meta property="og:url" content="$canonical">
+  <meta property="og:image" content="$site_url/assets/patchlook-light-dark.webp">
+  <meta property="og:image:type" content="image/webp">
+  <meta property="og:image:width" content="2400">
+  <meta property="og:image:height" content="1474">
+  <meta property="og:image:alt" content="$screenshot_alt">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="$title">
+  <meta name="twitter:description" content="$description">
+  <meta name="twitter:image" content="$site_url/assets/patchlook-light-dark.webp">
+  <meta name="twitter:image:alt" content="$screenshot_alt">
+  <script type="application/ld+json">$structured_data</script>
+  <link rel="icon" type="image/png" href="${prefix}assets/logo.png">
+  <link rel="stylesheet" href="${prefix}styles.css">
+  <script src="${prefix}theme.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">$skip</a>
+  <header class="site-header wrap">
+    <a class="brand" href="$home" aria-label="Patchlook">
+      <img src="${prefix}assets/logo.png" alt="" width="34" height="34">
+      <span>Patchlook</span>
+    </a>
+    <nav class="header-actions" aria-label="$page_options">
+      <details class="action-menu">
+        <summary class="icon-button language-button" aria-label="$language_label">$language_icon<span>$language_short</span></summary>
+        <div class="action-popover" aria-label="$language_label">
+          $language_options
+        </div>
+      </details>
+      <button class="icon-button theme-button" type="button" aria-label="$theme" title="$theme" data-light-label="$switch_to_light" data-dark-label="$switch_to_dark" hidden>$sun_icon$moon_icon</button>
+      <a href="$repository" class="icon-button github-link" aria-label="GitHub" title="GitHub">$github_icon</a>
+    </nav>
+  </header>
+  <main id="main">
+    <section class="hero wrap" aria-labelledby="hero-title">
+      <div class="hero-heading">
+        <a class="release-link" href="$release_url">$version<span aria-hidden="true">$chevron_icon</span></a>
+        <h1 id="hero-title">$headline_1<br>$headline_2</h1>
+        <div class="readonly-label"><span class="status-light" aria-hidden="true"></span>$lock_icon<span>$readonly</span></div>
+      </div>
+      <div class="hero-copy">
+        <p>$intro</p>
+        <div class="hero-actions">
+          <a class="button primary" href="$release_url" data-open-download aria-haspopup="dialog" aria-controls="download-dialog">$download_icon<span>$download</span></a>
+          <a class="source-link" href="$repository">$view_source</a>
+        </div>
+        <p class="platform-note">$platforms</p>
+      </div>
+    </section>
+    <figure class="showcase wrap">
+      <a class="screenshot" href="${prefix}assets/patchlook-light-dark.webp" target="_blank" rel="noopener" aria-label="$screenshot_link">
+        <img src="${prefix}assets/patchlook-light-dark.webp" alt="$screenshot_alt" width="2400" height="1474" fetchpriority="high">
+      </a>
+      <figcaption><span>$screenshot_caption</span><a href="${prefix}assets/patchlook-light-dark.webp" target="_blank" rel="noopener">$screenshot_link $expand_icon</a></figcaption>
+    </figure>
+    <section class="features wrap" aria-label="$features_label">
+      <article>
+        <div class="feature-symbol diff-symbol" aria-hidden="true"><span>−</span><span>+</span></div>
+        <h2>$review_title</h2>
+        <p>$review_body</p>
+      </article>
+      <article>
+        <div class="feature-symbol" aria-hidden="true">$check_icon</div>
+        <h2>$stage_title</h2>
+        <p>$stage_body</p>
+      </article>
+      <article>
+        <div class="feature-symbol" aria-hidden="true">$terminal_icon</div>
+        <h2>$ssh_title</h2>
+        <p>$ssh_body</p>
+      </article>
+    </section>
+    <section class="faq wrap" aria-labelledby="faq-title">
+      <div class="faq-heading">
+        <h2 id="faq-title">$faq_title</h2>
+        <p>$faq_intro</p>
+        <a href="$guide_url">$guide $external_icon</a>
+      </div>
+      <div class="faq-questions">
+        <details id="platform-support">
+          <summary>$faq_platforms_question $chevron_icon</summary>
+          <p>$faq_platforms_answer</p>
+        </details>
+        <details id="local-staging">
+          <summary>$faq_staging_question $chevron_icon</summary>
+          <p>$faq_staging_answer</p>
+        </details>
+        <details id="remote-ssh">
+          <summary>$faq_ssh_question $chevron_icon</summary>
+          <p>$faq_ssh_answer</p>
+        </details>
+      </div>
+    </section>
+  </main>
+  <dialog id="download-dialog" class="download-dialog" aria-labelledby="download-title" aria-describedby="download-intro">
+    <div class="download-heading">
+      <div class="download-title"><h2 id="download-title">$get_title</h2><a class="release-link" href="$release_url">$version</a></div>
+      <button class="icon-button close-download" type="button" aria-label="$close_download">$close_icon</button>
+    </div>
+    <p id="download-intro" class="download-intro">$get_description</p>
+    <div class="download-box">
+      <div class="platform-tabs" role="tablist" aria-label="$download_platform" hidden>
+        <button id="tab-mac" type="button" role="tab" aria-controls="download-mac" aria-selected="true" tabindex="0" data-platform="mac">$mac_icon<span>macOS</span></button>
+        <button id="tab-windows" type="button" role="tab" aria-controls="download-windows" aria-selected="false" tabindex="-1" data-platform="windows">$windows_icon<span>Windows</span></button>
+        <button id="tab-linux" type="button" role="tab" aria-controls="download-linux" aria-selected="false" tabindex="-1" data-platform="linux">$terminal_icon<span>Linux</span></button>
+      </div>
+      <div class="download-panels">
+        <article id="download-mac" class="download-panel" data-platform-panel="mac">
+          <h3 class="platform-name">macOS</h3>
+          <p class="requirements">$mac_requirements</p><p class="download-detail">$mac_detail</p>
+          <a class="button primary platform-download" href="$mac_url" aria-label="macOS: $mac_download">$download_icon<span>$mac_download</span></a>
+          <div class="homebrew-install">
+            <p class="homebrew-label"><a href="$homebrew_url">$brew_title</a></p>
+            <div class="command-line"><code id="brew-command">$brew_install_command</code><button class="icon-button copy-command" type="button" aria-label="$brew_copy" title="$brew_copy" data-copied-label="$brew_copied" data-error="$brew_copy_error" hidden>$copy_icon$tick_icon</button></div>
+            <p class="command-feedback" role="status" aria-live="polite"></p>
+          </div>
+        </article>
+        <article id="download-windows" class="download-panel" data-platform-panel="windows">
+          <h3 class="platform-name">Windows</h3>
+          <p class="requirements">$windows_requirements</p><p class="download-detail">$windows_detail</p>
+          <a class="button primary platform-download" href="$windows_url" aria-label="Windows: $windows_download">$download_icon<span>$windows_download</span></a>
+        </article>
+        <article id="download-linux" class="download-panel" data-platform-panel="linux">
+          <h3 class="platform-name">Linux</h3>
+          <p class="requirements">$linux_requirements</p><p class="download-detail">$linux_detail</p>
+          <a class="button primary platform-download" href="$linux_url" aria-label="Linux: $linux_download">$download_icon<span>$linux_download</span></a>
+        </article>
+      </div>
+    </div>
+    <nav class="download-links" aria-label="$install_guide"><a href="$install_url">$install_guide</a><a href="$release_url">$release_notes $external_icon</a></nav>
+  </dialog>
+  <footer class="site-footer wrap">
+    <div><a class="footer-brand" href="$home">Patchlook</a><p>$built_with</p></div>
+    <nav aria-label="Patchlook"><a href="$guide_url">$guide</a><a href="$repository/blob/main/LICENSE">$license</a><a href="$repository/issues">$feedback</a><a href="$repository">$source $external_icon</a></nav>
+  </footer>
+</body>
+</html>

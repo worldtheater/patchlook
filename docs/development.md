@@ -2,6 +2,59 @@
 
 [Back to Patchlook](../README.md)
 
+## Homepage
+
+The GitHub Pages homepage lives in `website/`: one HTML template, shared CSS,
+copy in all nine app languages, and shared menu, theme, platform-switching, and command-copy controls. The Python builder reuses the app
+logo and README screenshot and takes download links from a published GitHub release.
+No frontend dependencies are required.
+
+```sh
+curl -fsSL https://api.github.com/repos/worldtheater/patchlook/releases/latest -o /tmp/patchlook-release.json
+python3 website/build.py --release-json /tmp/patchlook-release.json
+python3 -m http.server 4173 --bind 127.0.0.1 --directory dist/site
+```
+
+Open `http://127.0.0.1:4173/` (English); use the language menu for the other eight languages. `/zh/` remains the Simplified Chinese address. Check changes with
+`python3 -m unittest discover -s website -p 'test_*.py'` and `node --check website/theme.js`.
+`website/site.json` owns the repository and canonical site URLs, language routes, and Homebrew tap details. Language names come from the app's locale resources; homepage copy lives in `website/locales/`. Build checks require complete matching translation keys and working links for every language.
+
+For the first deployment, set **Settings → Pages → Source → GitHub Actions**.
+`.github/workflows/pages.yml` builds and deploys homepage changes on `main`, manual
+runs, and published/edited releases; pull requests only build and validate.
+It reads the latest published stable release at build time, so new releases update
+the version and platform links without editing page copy. Drafts are never used.
+
+### Search and AI discovery
+
+Each language is a complete static HTML page, including the short platform,
+staging, and SSH answers. Titles describe the product; canonical URLs and reciprocal
+`hreflang` links identify all nine translations in HTML and `sitemap.xml`. Open Graph
+and Twitter metadata reuse the real screenshot. `WebPage` and `SoftwareApplication`
+JSON-LD reuse visible copy, requirements, and the published release; do not add
+ratings or reviews without actual supporting content.
+
+After deployment, verify the final URLs in Google Search Console and Bing Webmaster
+Tools and submit `https://worldtheater.github.io/patchlook/sitemap.xml`. Check indexing,
+canonical selection, and structured data against the live pages. The project site
+cannot set the host's `https://worldtheater.github.io/robots.txt`: a file under
+`/patchlook/` has no robots authority. The builder only emits robots rules when
+`site.json` (or `--site-url`) targets a domain root. For this project URL, configure
+any crawler restrictions or sitemap declaration in the account-level Pages site,
+if one exists; otherwise submit the sitemap directly to the webmaster tools.
+
+AI discovery follows the same crawlable, accurate content. No crawler-only copy,
+invented reviews, or special AI instructions are included. `llms.txt` is not required
+by Google's AI search guidance. Software markup describes the app but does not
+guarantee a rich result: Google's app rich result also requires a genuine rating
+or review. Indexing and AI citations require live-site verification and cannot be
+established by a local build.
+
+References: [Google AI search guidance](https://developers.google.com/search/docs/appearance/ai-features),
+[software application markup](https://developers.google.com/search/docs/appearance/structured-data/software-app),
+[localized pages](https://developers.google.com/search/docs/specialty/international/localized-versions),
+and [robots.txt placement](https://developers.google.com/crawling/docs/robots-txt/create-robots-txt).
+
 ## Prerequisites
 
 All platforms need Rust 1.95+ and Git on `PATH`. Packaging and packaging tests also need Python 3.11+.
