@@ -9,6 +9,7 @@
 <p align="center">A native Git viewer for macOS, Windows, and Linux. Read-only by default.</p>
 
 <p align="center">
+  <a href="https://worldtheater.github.io/patchlook/">Website</a> ·
   <a href="https://github.com/worldtheater/patchlook/releases">Releases</a> ·
   <a href="#build-from-source">Build from source</a> ·
   <a href="https://github.com/worldtheater/patchlook/issues">Report an issue</a>

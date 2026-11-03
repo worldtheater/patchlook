@@ -9,6 +9,7 @@
 <p align="center">适用于 macOS、Windows 和 Linux 的原生 Git 查看器，默认只读。</p>
 
 <p align="center">
+  <a href="https://worldtheater.github.io/patchlook/zh/">主页</a> ·
   <a href="https://github.com/worldtheater/patchlook/releases">下载发行版</a> ·
   <a href="#从源码构建">从源码构建</a> ·
   <a href="https://github.com/worldtheater/patchlook/issues">反馈问题</a>
