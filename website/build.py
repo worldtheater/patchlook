@@ -160,6 +160,7 @@ def build(release, output, site_url=None):
             **copy, **links,
             "repository": repository,
             "site_url": site_url,
+            "google_site_verification": config["google_site_verification"],
             "canonical": f"{site_url}/{directory + '/' if directory else ''}",
             "prefix": prefix,
             "home": "./",
