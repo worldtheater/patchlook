@@ -41,11 +41,11 @@
     "window.border": "#414141"
   },
   "highlight": {
-    "editor.background": "#1e1e1e",
-    "editor.foreground": "#c8c8c8",
-    "editor.line_number": "#969696",
-    "editor.active_line_number": "#c8c8c8",
-    "editor.active_line.background": "#282828",
+    "editor_background": "#1e1e1e",
+    "editor_foreground": "#c8c8c8",
+    "editor_line_number": "#969696",
+    "editor_active_line_number": "#c8c8c8",
+    "editor_active_line": "#282828",
     "syntax": {
       "attribute": {
         "color": "#caa17e"

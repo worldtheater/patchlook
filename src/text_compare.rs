@@ -128,7 +128,7 @@ impl TextComparison {
         #[cfg(test)]
         let preferences = Preferences::default();
         DisplaySettings::initialize(&preferences, cx);
-        let soft_wrap = preferences.soft_wrap;
+        let soft_wrap = false;
         let sources = std::array::from_fn(|_| Source {
             editor: cx.new(|cx| {
                 EditorState::new(window, cx)
