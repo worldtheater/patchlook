@@ -168,5 +168,8 @@
   "ssh_key_type": "Type de clé",
   "ssh_fingerprint": "Empreinte SHA-256",
   "ssh_verify_remember": "N’approuvez le serveur que si l’empreinte correspond. La clé confirmée sera enregistrée dans SSH known_hosts pour les connexions suivantes.",
-  "ssh_trust_connect": "Approuver et connecter"
+  "ssh_trust_connect": "Approuver et connecter",
+  "submodule": "Sous-module",
+  "submodule_uninitialized": "Non initialisé",
+  "toggle_submodules": "Déplier ou replier les sous-modules"
 }

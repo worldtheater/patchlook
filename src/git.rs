@@ -1,6 +1,7 @@
 //! Git access. Local arguments go directly to Git; SSH arguments are POSIX-quoted.
 mod review;
 mod staging;
+mod submodules;
 mod transport;
 mod undo;
 use crate::ssh_auth::{SshHostVerification, SshSecret};
@@ -14,6 +15,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, Output, Stdio},
 };
+pub use submodules::Submodule;
 use transport::{GitCommand, SshConnection};
 pub use transport::{RepositoryLocation, SshAuthentication, SshConnectionControl, SshOptions};
 pub use undo::{WriteHistory, WriteScope};
@@ -219,6 +221,13 @@ impl Repository {
                 control,
             )?)),
         };
+        Self::open_with_session(location, remote)
+    }
+
+    fn open_with_session(
+        mut location: RepositoryLocation,
+        remote: Option<Arc<SshConnection>>,
+    ) -> Result<Self> {
         let bytes = output(
             command(location.path())
                 .remote(remote.clone())

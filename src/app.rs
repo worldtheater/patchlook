@@ -37,7 +37,7 @@ use patchlook::{
     preferences::{Appearance, Language, Layout, Preferences},
 };
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     ops::Range,
     path::PathBuf,
     rc::Rc,
@@ -49,6 +49,9 @@ const FILE_SELECTION_DELAY: Duration = Duration::from_millis(120);
 const COPY_FEEDBACK_DURATION: Duration = Duration::from_secs(2);
 const HISTORY_SEARCH_THRESHOLD: usize = 20;
 const STAGED_CHANGE_BACKGROUND_OPACITY: f32 = 0.30;
+const REPOSITORY_TREE_INDENT: f32 = 20.;
+const REPOSITORY_DISCLOSURE_WIDTH: f32 = 24.;
+const SUBMODULE_ROW_HEIGHT: f32 = 30.;
 
 gpui_kit::actions!(patchlook, [About, OpenRepository, Refresh, Quit]);
 
@@ -399,6 +402,7 @@ pub struct Patchlook {
     branches: Vec<Branch>,
     repository_scroll: ScrollHandle,
     collapsed_repository_groups: [bool; 2],
+    collapsed_repositories: HashSet<RepositoryLocation>,
     branch_scroll: UniformListScrollHandle,
     view: View,
     working: ChangeState,
@@ -503,6 +507,7 @@ impl Patchlook {
             branches: vec![],
             repository_scroll: ScrollHandle::new(),
             collapsed_repository_groups: [false; 2],
+            collapsed_repositories: HashSet::new(),
             branch_scroll: UniformListScrollHandle::new(),
             view,
             repository_preview: false,
@@ -1018,6 +1023,13 @@ impl Patchlook {
         if self.write_task.is_some() {
             return;
         }
+        if self
+            .preferences
+            .submodule(&path)
+            .is_some_and(|module| !module.initialized)
+        {
+            return;
+        }
         if self.selected_repository.as_ref() != Some(&path) {
             self.cancel_repository_load();
         }
@@ -1037,13 +1049,26 @@ impl Patchlook {
         {
             return;
         }
-        if !self.remote_sessions.contains_key(&path)
+        if self.connected_repository(&path).is_none()
             && matches!(&path, RepositoryLocation::Ssh { options, .. } if options.authentication.requires_secret())
         {
             self.remote_repository_dialog(Some(path), window, cx);
         } else {
             self.load(path, cx);
         }
+    }
+
+    fn connected_repository(&self, path: &RepositoryLocation) -> Option<Repository> {
+        self.remote_sessions
+            .get(path)
+            .or_else(|| {
+                let family = self.preferences.repository_family(path);
+                self.remote_sessions
+                    .iter()
+                    .find(|(other, _)| self.preferences.repository_family(other) == family)
+                    .map(|(_, repo)| repo)
+            })
+            .cloned()
     }
 
     fn remote_repository_dialog(
@@ -1229,11 +1254,11 @@ impl Patchlook {
         let preview = self.view != View::Repositories;
         let query = self.history.query.clone();
         let reference = self.preferences.viewed_branch(&path).map(str::to_owned);
-        let existing = self
-            .remote_sessions
-            .get(&path)
-            .filter(|_| secret.is_none())
-            .cloned();
+        let existing = secret
+            .is_none()
+            .then(|| self.connected_repository(&path))
+            .flatten();
+        let is_submodule = self.preferences.submodule(&path).is_some();
         let reuses_connection = existing.is_some();
         let control = SshConnectionControl::default();
         if path.is_remote() && existing.is_none() {
@@ -1246,14 +1271,19 @@ impl Patchlook {
             let result = cx
                 .background_spawn(async move {
                     let repo = match existing {
-                        Some(repo) => repo,
+                        Some(repo) if repo.location == path => repo,
+                        Some(repo) => repo.open_related(path.clone())?,
                         None => Repository::open_with_control(
-                            path,
+                            path.clone(),
                             secret,
                             Some(verification?),
                             control,
                         )?,
                     };
+                    if is_submodule {
+                        repo.ensure_submodule_directory(&path)?;
+                    }
+                    let submodules = repo.submodules()?;
                     let branches = repo.branches()?;
                     let (branch, page, changes) = match source {
                         Source::Working => {
@@ -1275,21 +1305,24 @@ impl Patchlook {
                     let commit = page.as_ref().and_then(|page| page.commits.first());
                     let prepared =
                         PreparedChanges::load(&repo, changes, commit, preview.then_some(0))?;
-                    anyhow::Ok((repo, branch, branches, page, prepared))
+                    anyhow::Ok((repo, submodules, branch, branches, page, prepared))
                 })
                 .await;
             let _ = this.update(cx, |this, cx| {
                 this.loading = false;
                 this.pending_connection = None;
                 match result {
-                    Ok((repo, branch, branches, page, prepared)) => {
-                        if repo.is_remote()
-                            && !reuses_connection
-                            && let Some(old) = this
-                                .remote_sessions
-                                .insert(repo.location.clone(), repo.clone())
-                        {
-                            old.disconnect();
+                    Ok((repo, submodules, branch, branches, page, prepared)) => {
+                        if repo.is_remote() {
+                            if !reuses_connection
+                                && let Some(old) = this.connected_repository(&requested)
+                            {
+                                this.remote_sessions
+                                    .retain(|_, other| !old.shares_connection(other));
+                                old.disconnect();
+                            }
+                            this.remote_sessions
+                                .insert(repo.location.clone(), repo.clone());
                         }
                         if this.repository.as_ref().map(|old| &old.location) != Some(&repo.location)
                         {
@@ -1311,6 +1344,8 @@ impl Patchlook {
                                 .retain(|entry| entry.path != requested);
                         }
                         this.preferences.remember_repository(repo.location.clone());
+                        this.preferences
+                            .remember_submodules(&repo.location, &submodules);
                         if requested != repo.location && requested_branch.is_some() {
                             this.preferences
                                 .set_viewed_branch(&repo.location, requested_branch);
@@ -1379,19 +1414,22 @@ impl Patchlook {
         {
             self.cancel_repository_load();
         }
-        if let Some(repo) = self.remote_sessions.remove(path) {
+        let connected = self.connected_repository(path);
+        let clears_current = self.repository.as_ref().is_some_and(|repo| {
+            &repo.location == path
+                || connected
+                    .as_ref()
+                    .is_some_and(|other| repo.shares_connection(other))
+        });
+        if let Some(repo) = connected {
+            self.remote_sessions
+                .retain(|_, other| !repo.shares_connection(other));
             repo.disconnect();
         }
-        if self
-            .repository
-            .as_ref()
-            .is_some_and(|repo| &repo.location == path)
-        {
+        if clears_current {
             self.clear_repository(window, cx);
-            if self.preferences.repository.as_ref() == Some(path) {
-                self.preferences.repository = None;
-                self.save_preferences();
-            }
+            self.preferences.repository = None;
+            self.save_preferences();
         }
         self.remote_errors.remove(path);
         self.error = None;
@@ -1441,6 +1479,9 @@ impl Patchlook {
             return;
         }
         let Some(index) = self.selected_repository.as_ref().and_then(|path| {
+            if self.preferences.submodule(path).is_some() {
+                return None;
+            }
             self.preferences
                 .recent_repositories
                 .iter()
@@ -1448,25 +1489,35 @@ impl Patchlook {
         }) else {
             return;
         };
-        let removed = self.preferences.recent_repositories.remove(index).path;
-        if let Some(repo) = self.remote_sessions.remove(&removed) {
+        let path = self.preferences.recent_repositories[index].path.clone();
+        if let Some(repo) = self.connected_repository(&path) {
+            self.remote_sessions
+                .retain(|_, other| !repo.shares_connection(other));
             repo.disconnect();
         }
-        self.remote_errors.remove(&removed);
-        if self.preferences.repository.as_ref() == Some(&removed) {
-            self.preferences.repository = None;
+        let removed = self.preferences.remove_repository_tree(&path);
+        for path in &removed {
+            self.remote_errors.remove(path);
+            self.collapsed_repositories.remove(path);
         }
         let next = self
             .preferences
             .recent_repositories
-            .get(index)
-            .or_else(|| self.preferences.recent_repositories.last())
+            .iter()
+            .filter(|entry| entry.submodule.is_none())
+            .nth(index)
+            .or_else(|| {
+                self.preferences
+                    .recent_repositories
+                    .iter()
+                    .rfind(|entry| entry.submodule.is_none())
+            })
             .map(|entry| entry.path.clone());
 
         if self
             .repository
             .as_ref()
-            .is_some_and(|repo| repo.location == removed)
+            .is_some_and(|repo| removed.contains(&repo.location))
         {
             self.clear_repository(window, cx);
         }
@@ -2523,7 +2574,14 @@ impl Patchlook {
                     .text_xs()
                     .text_color(cx.theme().muted_foreground)
                     .child(tr("recent_repositories"))
-                    .child(self.preferences.recent_repositories.len().to_string())
+                    .child(
+                        self.preferences
+                            .recent_repositories
+                            .iter()
+                            .filter(|e| e.submodule.is_none())
+                            .count()
+                            .to_string(),
+                    )
                     .child(div().flex_1())
                     .child(self.repository_menu("add-repository", IconName::Plus, true, cx))
                     .child(
@@ -2532,6 +2590,9 @@ impl Patchlook {
                             .text_color(cx.theme().muted_foreground)
                             .disabled(
                                 self.selected_repository.is_none()
+                                    || self.selected_repository.as_ref().is_some_and(|path| {
+                                        self.preferences.submodule(path).is_some()
+                                    })
                                     || self.loading
                                     || self.write_task.is_some(),
                             )
@@ -2557,7 +2618,10 @@ impl Patchlook {
                                     .recent_repositories
                                     .iter()
                                     .enumerate()
-                                    .filter(|(_, entry)| entry.path.is_remote() == remote)
+                                    .filter(|(_, entry)| {
+                                        entry.path.is_remote() == remote
+                                            && entry.submodule.is_none()
+                                    })
                                     .map(|(index, _)| index)
                                     .collect();
                                 if entries.is_empty() {
@@ -2616,11 +2680,9 @@ impl Patchlook {
                                             )
                                         })
                                         .when(!show_groups || expanded, |section| {
-                                            section.children(
-                                                entries
-                                                    .into_iter()
-                                                    .map(|index| self.repository_row(index, cx)),
-                                            )
+                                            section.children(entries.into_iter().map(|index| {
+                                                self.repository_item(index, 0, true, cx)
+                                            }))
                                         }),
                                 )
                             })),
@@ -2642,168 +2704,290 @@ impl Patchlook {
             "ssh_connecting"
         } else if self.remote_errors.contains_key(path) {
             "ssh_connection_failed"
-        } else if self.remote_sessions.contains_key(path) {
+        } else if self.connected_repository(path).is_some() {
             "ssh_connected"
         } else {
             "ssh_disconnected"
         }
     }
 
-    fn repository_row(&self, index: usize, cx: &mut Context<Self>) -> Div {
-        let path = self.preferences.recent_repositories[index].path.clone();
+    fn repository_item(
+        &self,
+        index: usize,
+        depth: usize,
+        last: bool,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let path = &self.preferences.recent_repositories[index].path;
+        let children: Vec<_> = self
+            .preferences
+            .recent_repositories
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| e.submodule.as_ref().is_some_and(|s| &s.parent == path))
+            .map(|(index, _)| index)
+            .collect();
+        let expanded = !self.collapsed_repositories.contains(path)
+            && depth < self.preferences.recent_repositories.len();
+        v_flex()
+            .relative()
+            .flex_none()
+            .child(self.repository_row(index, depth, cx))
+            .when(expanded, |group| {
+                group.children(children.iter().enumerate().map(|(position, &index)| {
+                    self.repository_item(index, depth + 1, position + 1 == children.len(), cx)
+                }))
+            })
+            .when(depth > 0, |group| {
+                let left = px(8.
+                    + REPOSITORY_DISCLOSURE_WIDTH / 2.
+                    + (depth - 1) as f32 * REPOSITORY_TREE_INDENT);
+                let middle = px((SUBMODULE_ROW_HEIGHT - 2.) / 2.);
+                let color = cx.theme().border;
+                group
+                    .child(
+                        div()
+                            .absolute()
+                            .left(left)
+                            .top_0()
+                            .w(px(1.))
+                            .map(|line| if last { line.h(middle) } else { line.h_full() })
+                            .bg(color),
+                    )
+                    .child(
+                        div()
+                            .absolute()
+                            .left(left)
+                            .top(middle)
+                            .w(px(REPOSITORY_TREE_INDENT - REPOSITORY_DISCLOSURE_WIDTH / 2.))
+                            .h(px(1.))
+                            .bg(color),
+                    )
+            })
+            .when(depth == 0 && expanded && !children.is_empty(), |group| {
+                group.pb_1()
+            })
+    }
+
+    fn repository_row(&self, index: usize, depth: usize, cx: &mut Context<Self>) -> Div {
+        let entry = &self.preferences.recent_repositories[index];
+        let path = entry.path.clone();
+        let initialized = entry.submodule.as_ref().is_none_or(|s| s.initialized);
+        let submodule = entry.submodule.is_some();
+        let has_children = self
+            .preferences
+            .recent_repositories
+            .iter()
+            .any(|e| e.submodule.as_ref().is_some_and(|s| s.parent == path));
+        let expanded = !self.collapsed_repositories.contains(&path);
         let selected = self.selected_repository.as_ref() == Some(&path);
         let remote = path.is_remote();
         let group = SharedString::from(format!("repository-row-{index}"));
         let row_path = path.clone();
-        let status = self.remote_status(&path);
+        let status = if !initialized {
+            "submodule_uninitialized"
+        } else if remote {
+            self.remote_status(&path)
+        } else {
+            "submodule"
+        };
         let tooltip = self
             .remote_errors
             .get(&path)
             .map(|error| format!("{path}\n{error}"))
             .unwrap_or_else(|| path.to_string());
-        div().h(px(50.)).flex_none().px_2().pb_1().child(
-            h_flex()
-                .group(group.clone())
-                .size_full()
-                .rounded_md()
-                .when(selected, |row| row.bg(cx.theme().secondary_active))
-                .hover(|row| {
-                    row.bg(if selected {
-                        cx.theme().secondary_active
-                    } else {
-                        cx.theme().list_hover
+        div()
+            .h(px(if submodule { SUBMODULE_ROW_HEIGHT } else { 50. }))
+            .flex_none()
+            .px_2()
+            .pb(px(if submodule { 2. } else { 4. }))
+            .child(
+                h_flex()
+                    .group(group.clone())
+                    .size_full()
+                    .rounded_md()
+                    .when(selected, |row| row.bg(cx.theme().secondary_active))
+                    .hover(|row| {
+                        row.bg(if selected {
+                            cx.theme().secondary_active
+                        } else {
+                            cx.theme().list_hover
+                        })
                     })
-                })
-                .child(
-                    Button::new(("repository", index))
-                        .custom(ButtonCustomVariant::new(cx))
-                        .flex_1()
-                        .min_w_0()
-                        .h_full()
-                        .justify_start()
-                        .tooltip(tooltip)
-                        .accessibility_label(path.to_string())
-                        .disabled(self.write_task.is_some())
-                        .child(
-                            h_flex()
-                                .gap_2()
-                                .w_full()
-                                .min_w_0()
-                                .child(
-                                    Icon::new(if remote {
-                                        IconName::Server
-                                    } else {
-                                        IconName::Folder
-                                    })
-                                    .small()
-                                    .text_color(cx.theme().muted_foreground),
+                    .child(
+                        div()
+                            .flex_none()
+                            .w(px(depth as f32 * REPOSITORY_TREE_INDENT)),
+                    )
+                    .when(has_children || submodule, |row| {
+                        row.child(div().flex_none().w(px(REPOSITORY_DISCLOSURE_WIDTH)).when(
+                            has_children,
+                            |slot| {
+                                let path = path.clone();
+                                slot.child(
+                                    Button::new(("repository-expand", index))
+                                        .icon(if expanded {
+                                            IconName::ChevronDown
+                                        } else {
+                                            IconName::ChevronRight
+                                        })
+                                        .xsmall()
+                                        .w(px(REPOSITORY_DISCLOSURE_WIDTH))
+                                        .custom(ButtonCustomVariant::new(cx))
+                                        .text_color(cx.theme().muted_foreground)
+                                        .accessibility_label(tr("toggle_submodules"))
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            if !this.collapsed_repositories.remove(&path) {
+                                                this.collapsed_repositories.insert(path.clone());
+                                            }
+                                            cx.notify();
+                                        })),
                                 )
-                                .child(
-                                    v_flex()
-                                        .min_w_0()
-                                        .flex_1()
-                                        .items_start()
-                                        .child(
-                                            h_flex()
-                                                .gap_2()
-                                                .w_full()
-                                                .min_w_0()
-                                                .child(
-                                                    div()
-                                                        .text_sm()
-                                                        .min_w_0()
-                                                        .flex_1()
-                                                        .truncate()
-                                                        .child(path.name()),
-                                                )
-                                                .when(remote, |row| {
-                                                    row.child(
+                            },
+                        ))
+                    })
+                    .child(
+                        Button::new(("repository", index))
+                            .custom(ButtonCustomVariant::new(cx))
+                            .flex_1()
+                            .min_w_0()
+                            .h_full()
+                            .when(has_children || submodule, |button| button.pl_0())
+                            .justify_start()
+                            .tooltip(tooltip)
+                            .accessibility_label(if submodule {
+                                format!("{}: {path}", tr("submodule"))
+                            } else {
+                                path.to_string()
+                            })
+                            .disabled(self.write_task.is_some() || !initialized)
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .w_full()
+                                    .min_w_0()
+                                    .child(
+                                        Icon::new(if submodule {
+                                            IconName::GitBranch
+                                        } else if remote {
+                                            IconName::Server
+                                        } else {
+                                            IconName::Folder
+                                        })
+                                        .small()
+                                        .text_color(cx.theme().muted_foreground),
+                                    )
+                                    .child(
+                                        v_flex()
+                                            .min_w_0()
+                                            .flex_1()
+                                            .items_start()
+                                            .child(
+                                                h_flex()
+                                                    .gap_2()
+                                                    .w_full()
+                                                    .min_w_0()
+                                                    .child(
                                                         div()
-                                                            .id(("repository-status", index))
-                                                            .test_support()
-                                                            .text_xs()
-                                                            .text_color(cx.theme().muted_foreground)
-                                                            .aria_label(tr(status))
-                                                            .child(tr(status)),
+                                                            .text_sm()
+                                                            .min_w_0()
+                                                            .flex_1()
+                                                            .truncate()
+                                                            .child(path.name()),
                                                     )
-                                                }),
-                                        )
-                                        .child(
-                                            div()
-                                                .text_xs()
-                                                .text_color(cx.theme().muted_foreground)
-                                                .truncate()
-                                                .child(path.to_string()),
+                                                    .when(remote || !initialized, |row| {
+                                                        row.child(
+                                                            div()
+                                                                .id(("repository-status", index))
+                                                                .test_support()
+                                                                .text_xs()
+                                                                .text_color(
+                                                                    cx.theme().muted_foreground,
+                                                                )
+                                                                .aria_label(tr(status))
+                                                                .child(tr(status)),
+                                                        )
+                                                    }),
+                                            )
+                                            .when(!submodule, |column| {
+                                                column.child(
+                                                    div()
+                                                        .text_xs()
+                                                        .text_color(cx.theme().muted_foreground)
+                                                        .truncate()
+                                                        .child(path.to_string()),
+                                                )
+                                            }),
+                                    ),
+                            )
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.open_saved_repository(row_path.clone(), window, cx)
+                            })),
+                    )
+                    .when(remote && initialized, |row| {
+                        let disconnect = path.clone();
+                        let reconnect = path.clone();
+                        let can_disconnect = self
+                            .pending_connection
+                            .as_ref()
+                            .is_some_and(|(target, _)| target == &path)
+                            || (!self.loading && self.connected_repository(&path).is_some());
+                        let disconnect_app = cx.entity().downgrade();
+                        let reconnect_app = disconnect_app.clone();
+                        let busy = self.write_task.is_some();
+                        row.child(
+                            div()
+                                .flex_none()
+                                .pr_1()
+                                .invisible()
+                                .group_hover(group, |style| style.visible())
+                                .child(
+                                    Button::new(("repository-more", index))
+                                        .icon(IconName::Ellipsis)
+                                        .xsmall()
+                                        .custom(list_action_style(cx))
+                                        .text_color(cx.theme().muted_foreground)
+                                        .accessibility_label(tr("repository_actions"))
+                                        .disabled(busy)
+                                        .dropdown_menu_with_anchor(
+                                            Anchor::TopRight,
+                                            move |menu, _, _| {
+                                                let target = disconnect.clone();
+                                                let app = disconnect_app.clone();
+                                                let reconnect = reconnect.clone();
+                                                let reconnect_app = reconnect_app.clone();
+                                                menu.item(
+                                                    PopupMenuItem::new(tr("ssh_disconnect"))
+                                                        .disabled(!can_disconnect)
+                                                        .on_click(move |_, window, cx| {
+                                                            let _ = app.update(cx, |this, cx| {
+                                                                this.disconnect_repository(
+                                                                    &target, window, cx,
+                                                                )
+                                                            });
+                                                        }),
+                                                )
+                                                .item(
+                                                    PopupMenuItem::new(tr("ssh_reconnect"))
+                                                        .on_click(move |_, window, cx| {
+                                                            let _ = reconnect_app.update(
+                                                                cx,
+                                                                |this, cx| {
+                                                                    this.reconnect_repository(
+                                                                        reconnect.clone(),
+                                                                        window,
+                                                                        cx,
+                                                                    )
+                                                                },
+                                                            );
+                                                        }),
+                                                )
+                                            },
                                         ),
                                 ),
                         )
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.open_saved_repository(row_path.clone(), window, cx)
-                        })),
-                )
-                .when(remote, |row| {
-                    let disconnect = path.clone();
-                    let reconnect = path.clone();
-                    let can_disconnect = self
-                        .pending_connection
-                        .as_ref()
-                        .is_some_and(|(target, _)| target == &path)
-                        || (!self.loading && self.remote_sessions.contains_key(&path));
-                    let disconnect_app = cx.entity().downgrade();
-                    let reconnect_app = disconnect_app.clone();
-                    let busy = self.write_task.is_some();
-                    row.child(
-                        div()
-                            .flex_none()
-                            .pr_1()
-                            .invisible()
-                            .group_hover(group, |style| style.visible())
-                            .child(
-                                Button::new(("repository-more", index))
-                                    .icon(IconName::Ellipsis)
-                                    .xsmall()
-                                    .custom(list_action_style(cx))
-                                    .text_color(cx.theme().muted_foreground)
-                                    .accessibility_label(tr("repository_actions"))
-                                    .disabled(busy)
-                                    .dropdown_menu_with_anchor(
-                                        Anchor::TopRight,
-                                        move |menu, _, _| {
-                                            let target = disconnect.clone();
-                                            let app = disconnect_app.clone();
-                                            let reconnect = reconnect.clone();
-                                            let reconnect_app = reconnect_app.clone();
-                                            menu.item(
-                                                PopupMenuItem::new(tr("ssh_disconnect"))
-                                                    .disabled(!can_disconnect)
-                                                    .on_click(move |_, window, cx| {
-                                                        let _ = app.update(cx, |this, cx| {
-                                                            this.disconnect_repository(
-                                                                &target, window, cx,
-                                                            )
-                                                        });
-                                                    }),
-                                            )
-                                            .item(
-                                                PopupMenuItem::new(tr("ssh_reconnect")).on_click(
-                                                    move |_, window, cx| {
-                                                        let _ =
-                                                            reconnect_app.update(cx, |this, cx| {
-                                                                this.reconnect_repository(
-                                                                    reconnect.clone(),
-                                                                    window,
-                                                                    cx,
-                                                                )
-                                                            });
-                                                    },
-                                                ),
-                                            )
-                                        },
-                                    ),
-                            ),
-                    )
-                }),
-        )
+                    }),
+            )
     }
 
     fn branch_list(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -4319,6 +4503,7 @@ mod tests {
             branches: vec![],
             repository_scroll: ScrollHandle::new(),
             collapsed_repository_groups: [false; 2],
+            collapsed_repositories: HashSet::new(),
             branch_scroll: UniformListScrollHandle::new(),
             view: View::Working,
             repository_preview: false,
@@ -4452,6 +4637,122 @@ mod tests {
             assert!(!app.read(cx).loading);
         })
         .unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn submodule_rows_collapse_and_switch_between_independent_repositories(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            cx.set_reduce_motion(true);
+        });
+        let directory = tempfile::tempdir().unwrap();
+        let parent_path = directory.path();
+        let child_path = parent_path.join("deps/child");
+        std::fs::create_dir_all(&child_path).unwrap();
+        git(parent_path, &["init", "-b", "main"]);
+        git(&child_path, &["init", "-b", "child-branch"]);
+        std::fs::write(child_path.join("child.txt"), "child content\n").unwrap();
+        git(&child_path, &["add", "child.txt"]);
+        git(&child_path, &["commit", "-m", "Child commit"]);
+        let child = Repository::open(&child_path).unwrap();
+        let oid = child.history(0, None).unwrap().commits[0].id.clone();
+        for path in ["deps/child", "missing"] {
+            git(
+                parent_path,
+                &["update-index", "--add", "--cacheinfo", "160000", &oid, path],
+            );
+        }
+        git(parent_path, &["commit", "-m", "Parent commit"]);
+        std::fs::write(child_path.join("untracked.txt"), "child only\n").unwrap();
+        let parent = Repository::open(parent_path).unwrap();
+        let missing = parent
+            .location
+            .join(std::path::Path::new("missing"))
+            .unwrap();
+        let (handle, app) = cx.update(|cx| {
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                cx.new(|cx| {
+                    let mut app = test_app(window, cx);
+                    app.view = View::Repositories;
+                    app
+                })
+            })
+            .unwrap()
+        });
+        cx.update(|cx| app.update(cx, |app, cx| app.load(parent.location.clone(), cx)));
+        cx.run_until_parked();
+        let index = |app: &Patchlook, path: &RepositoryLocation| {
+            app.preferences
+                .recent_repositories
+                .iter()
+                .position(|e| &e.path == path)
+                .unwrap()
+        };
+        cx.update_window(handle, |_, window, cx| {
+            assert!(app.read(cx).error.is_none(), "{:?}", app.read(cx).error);
+            assert_eq!(app.read(cx).preferences.recent_repositories.len(), 3);
+            let parent_index = index(app.read(cx), &parent.location);
+            let child_index = index(app.read(cx), &child.location);
+            let missing_index = index(app.read(cx), &missing);
+            window.render_frame(cx);
+            window.render_frame(cx);
+            assert_eq!(
+                window.find(("repository", missing_index)).disabled(),
+                Some(true)
+            );
+            assert_eq!(
+                window.find(("repository-status", missing_index)).label(),
+                Some(tr("submodule_uninitialized"))
+            );
+            assert!(
+                window.find(("repository", child_index)).bounds().left()
+                    > window.find(("repository", parent_index)).bounds().left()
+            );
+            window.click(("repository-expand", parent_index), cx);
+            window.render_frame(cx);
+            assert!(window.try_find(("repository", child_index)).is_none());
+            window.click(("repository-expand", parent_index), cx);
+            window.render_frame(cx);
+            window.click(("repository", child_index), cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            assert!(app.read(cx).error.is_none(), "{:?}", app.read(cx).error);
+            assert_eq!(
+                app.read(cx).repository.as_ref().unwrap().location,
+                child.location
+            );
+            assert_eq!(app.read(cx).branch, "child-branch");
+            assert_eq!(app.read(cx).history.commits[0].subject, "Child commit");
+            window.render_frame(cx);
+            assert_eq!(window.find("remove-repository").disabled(), Some(true));
+            app.update(cx, |app, cx| app.switch_view(View::Working, cx));
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            assert_eq!(app.read(cx).working.changes.len(), 1);
+            assert_eq!(
+                app.read(cx).working.changes[0].path,
+                PathBuf::from("untracked.txt")
+            );
+            app.update(cx, |app, cx| app.switch_view(View::Repositories, cx));
+            window.render_frame(cx);
+            window.render_frame(cx);
+            window.click(("repository", index(app.read(cx), &parent.location)), cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update(|cx| {
+            let state = app.read(cx);
+            assert!(state.error.is_none(), "{:?}", state.error);
+            assert_eq!(state.repository.as_ref().unwrap().location, parent.location);
+            assert_eq!(state.history.commits[0].subject, "Parent commit");
+            assert_eq!(state.preferences.recent_repositories.len(), 3);
+        });
     }
 
     #[gpui_kit::test]
@@ -5149,6 +5450,91 @@ mod tests {
             window.click("ssh-connect", cx);
             assert!(!app.read(cx).loading);
             assert!(app.read(cx).repository.is_none());
+        })
+        .unwrap();
+    }
+
+    #[gpui_kit::test]
+    #[ignore = "requires the isolated SSH fixture"]
+    fn ssh_submodule_navigation_reuses_parent_and_disconnects_family(cx: &mut TestAppContext) {
+        use patchlook::{
+            git::{SshAuthentication, SshOptions},
+            ssh_auth::SshSecret,
+        };
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            cx.set_reduce_motion(true);
+        });
+        let parent = RepositoryLocation::Ssh {
+            path: "/home/review/repos/modules".into(),
+            options: SshOptions {
+                host: "127.0.0.1".into(),
+                port: Some(2222),
+                username: Some("review".into()),
+                authentication: SshAuthentication::Password,
+                config_file: Some(
+                    std::env::var_os("PATCHLOOK_TEST_SSH_CONFIG")
+                        .unwrap()
+                        .into(),
+                ),
+                ..Default::default()
+            },
+        };
+        let child = parent
+            .join(std::path::Path::new("deps/子模块 [one]"))
+            .unwrap();
+        let (handle, app) = cx.update(|cx| {
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                cx.new(|cx| {
+                    let mut app = test_app(window, cx);
+                    app.view = View::Repositories;
+                    app
+                })
+            })
+            .unwrap()
+        });
+        cx.update(|cx| {
+            app.update(cx, |app, cx| {
+                let secret = SshSecret::new(
+                    "patchlook-test".into(),
+                    std::env::var_os("PATCHLOOK_TEST_SSH_HELPER")
+                        .unwrap()
+                        .into(),
+                )
+                .unwrap();
+                app.load_repository(parent.clone(), Some(secret), cx);
+            })
+        });
+        cx.run_until_parked();
+        for target in [&child, &parent, &child] {
+            cx.update_window(handle, |_, window, cx| {
+                app.update(cx, |app, cx| {
+                    assert!(app.error.is_none(), "{:?}", app.error);
+                    app.open_saved_repository(target.clone(), window, cx);
+                    assert!(app.pending_connection.is_none());
+                });
+                window.render_frame(cx);
+                assert!(window.try_find("ssh-form").is_none());
+            })
+            .unwrap();
+            cx.run_until_parked();
+            cx.update(|cx| {
+                let state = app.read(cx);
+                assert!(state.error.is_none(), "{:?}", state.error);
+                assert_eq!(&state.repository.as_ref().unwrap().location, target);
+                assert_eq!(state.access_mode, AccessMode::ReadOnly);
+            });
+        }
+        cx.update_window(handle, |_, window, cx| {
+            app.update(cx, |app, cx| {
+                assert!(
+                    app.remote_sessions[&parent].shares_connection(&app.remote_sessions[&child])
+                );
+                app.disconnect_repository(&parent, window, cx);
+                assert!(app.repository.is_none());
+                assert!(app.remote_sessions.is_empty());
+                assert_eq!(app.remote_status(&child), "ssh_disconnected");
+            });
         })
         .unwrap();
     }

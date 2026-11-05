@@ -168,5 +168,8 @@
   "ssh_key_type": "Tipo de chave",
   "ssh_fingerprint": "Impressão digital SHA-256",
   "ssh_verify_remember": "Confie apenas se a impressão digital corresponder. A chave confirmada será salva no SSH known_hosts para conexões futuras.",
-  "ssh_trust_connect": "Confiar e conectar"
+  "ssh_trust_connect": "Confiar e conectar",
+  "submodule": "Submódulo",
+  "submodule_uninitialized": "Não inicializado",
+  "toggle_submodules": "Expandir ou recolher submódulos"
 }

@@ -10,6 +10,47 @@ use patchlook::{
 use std::{path::Path, process::Command};
 
 #[test]
+#[ignore = "requires the isolated SSH fixture with submodules"]
+fn remote_submodules_share_authentication_and_remain_read_only() {
+    let target = RepositoryLocation::Ssh {
+        path: "/home/review/repos/modules".into(),
+        options: SshOptions {
+            host: "patchlook-test".into(),
+            config_file: Some(
+                std::env::var_os("PATCHLOOK_TEST_SSH_CONFIG")
+                    .unwrap()
+                    .into(),
+            ),
+            ..Default::default()
+        },
+    };
+    let parent = Repository::open_location(target).unwrap();
+    let modules = parent.submodules().unwrap();
+    assert_eq!(modules.len(), 2);
+    let ready = modules.iter().find(|m| m.initialized).unwrap();
+    let missing = modules.iter().find(|m| !m.initialized).unwrap();
+    assert!(parent.open_related(missing.location.clone()).is_err());
+    let child = parent.open_related(ready.location.clone()).unwrap();
+    assert!(child.shares_connection(&parent));
+    assert_eq!(
+        child.history(0, None).unwrap().commits[0].subject,
+        "Child history"
+    );
+    let change = child.working_changes().unwrap().remove(0);
+    assert_eq!(change.path, Path::new("new.txt"));
+    assert!(
+        child
+            .set_staged(AccessMode::ReadWrite, &change, StageSelection::File, None)
+            .is_err()
+    );
+    let returned = child.open_related(parent.location.clone()).unwrap();
+    assert!(returned.shares_connection(&parent));
+    parent.disconnect();
+    assert!(child.branch_name().is_err());
+    assert!(returned.branch_name().is_err());
+}
+
+#[test]
 #[ignore = "requires the isolated SSH fixture"]
 fn disconnect_invalidates_all_repository_clones_and_reconnect_uses_a_new_session() {
     use patchlook::git::SshConnectionControl;

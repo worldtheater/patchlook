@@ -168,5 +168,8 @@
   "ssh_key_type": "키 유형",
   "ssh_fingerprint": "SHA-256 지문",
   "ssh_verify_remember": "지문이 일치할 때만 신뢰하세요. 확인한 키는 SSH known_hosts에 저장되어 다음 연결에서 검증됩니다.",
-  "ssh_trust_connect": "신뢰하고 연결"
+  "ssh_trust_connect": "신뢰하고 연결",
+  "submodule": "서브모듈",
+  "submodule_uninitialized": "초기화되지 않음",
+  "toggle_submodules": "서브모듈 펼치기 또는 접기"
 }

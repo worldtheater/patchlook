@@ -40,6 +40,7 @@ def main():
             "-p", f"127.0.0.1:{args.port}:22", "--mount", f"type=bind,src={key}.pub,dst=/run/test-key.pub,readonly", image)
     else:
         run("docker", "cp", str(root / "scripts" / "ssh-test" / "start.sh"), f"{name}:/opt/patchlook/start.sh")
+        run("docker", "cp", str(root / "scripts" / "ssh-test" / "seed.py"), f"{name}:/opt/patchlook/seed.py")
         run("docker", "restart", name)
     port = run("docker", "port", name, "22/tcp").rsplit(":", 1)[1]
     for _ in range(60):

@@ -168,5 +168,8 @@
   "ssh_key_type": "金鑰類型",
   "ssh_fingerprint": "SHA-256 指紋",
   "ssh_verify_remember": "指紋一致時再信任。確認後會記入 SSH known_hosts，後續連線自動驗證。",
-  "ssh_trust_connect": "信任並連線"
+  "ssh_trust_connect": "信任並連線",
+  "submodule": "子模組",
+  "submodule_uninitialized": "尚未初始化",
+  "toggle_submodules": "展開或收合子模組"
 }

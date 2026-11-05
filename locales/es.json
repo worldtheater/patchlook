@@ -168,5 +168,8 @@
   "ssh_key_type": "Tipo de clave",
   "ssh_fingerprint": "Huella SHA-256",
   "ssh_verify_remember": "Confía solo si la huella coincide. La clave confirmada se guardará en SSH known_hosts para las próximas conexiones.",
-  "ssh_trust_connect": "Confiar y conectar"
+  "ssh_trust_connect": "Confiar y conectar",
+  "submodule": "Submódulo",
+  "submodule_uninitialized": "Sin inicializar",
+  "toggle_submodules": "Expandir o contraer submódulos"
 }

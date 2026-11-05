@@ -168,5 +168,8 @@
   "ssh_key_type": "鍵の種類",
   "ssh_fingerprint": "SHA-256 指紋",
   "ssh_verify_remember": "指紋が一致する場合のみ信頼してください。確認した鍵は SSH known_hosts に保存され、次回以降の接続で検証されます。",
-  "ssh_trust_connect": "信頼して接続"
+  "ssh_trust_connect": "信頼して接続",
+  "submodule": "サブモジュール",
+  "submodule_uninitialized": "未初期化",
+  "toggle_submodules": "サブモジュールを展開・折りたたむ"
 }

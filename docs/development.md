@@ -115,7 +115,7 @@ cargo run --locked --release -- --ssh patchlook-test /home/review/repos/demo \
   --ssh-config "$PWD/dist/ssh-test/config"
 ```
 
-The fixture includes 106 commits, another branch, staged/unstaged changes, renames, deleted and untracked files, binary and image files, and paths containing spaces, quotes, Unicode, and shell metacharacters. `/home/review/repos/unborn` has no commits yet.
+The fixture includes 106 commits, another branch, staged/unstaged changes, renames, deleted and untracked files, binary and image files, and paths containing spaces, quotes, Unicode, and shell metacharacters. `/home/review/repos/unborn` has no commits yet. `/home/review/repos/modules` contains initialized and uninitialized submodules for navigation and shared-session tests.
 
 The live SSH tests are ignored in ordinary test runs. Run both repository and UI tests explicitly:
 

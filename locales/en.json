@@ -168,5 +168,8 @@
   "ssh_key_type": "Key type",
   "ssh_fingerprint": "SHA-256 fingerprint",
   "ssh_verify_remember": "Only trust this server if the fingerprint matches. The confirmed key will be saved in SSH known_hosts for future connections.",
-  "ssh_trust_connect": "Trust and connect"
+  "ssh_trust_connect": "Trust and connect",
+  "submodule": "Submodule",
+  "submodule_uninitialized": "Not initialized",
+  "toggle_submodules": "Expand or collapse submodules"
 }

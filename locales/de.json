@@ -168,5 +168,8 @@
   "ssh_key_type": "Schlüsseltyp",
   "ssh_fingerprint": "SHA-256-Fingerabdruck",
   "ssh_verify_remember": "Vertrauen Sie nur bei übereinstimmendem Fingerabdruck. Der bestätigte Schlüssel wird für spätere Verbindungen in SSH known_hosts gespeichert.",
-  "ssh_trust_connect": "Vertrauen und verbinden"
+  "ssh_trust_connect": "Vertrauen und verbinden",
+  "submodule": "Submodul",
+  "submodule_uninitialized": "Nicht initialisiert",
+  "toggle_submodules": "Submodule ein- oder ausklappen"
 }

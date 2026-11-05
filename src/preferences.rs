@@ -491,6 +491,14 @@ impl Default for Preferences {
 pub struct RecentRepository {
     pub path: RepositoryLocation,
     pub viewed_branch: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub submodule: Option<RecentSubmodule>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct RecentSubmodule {
+    pub parent: RepositoryLocation,
+    pub initialized: bool,
 }
 
 impl Preferences {
@@ -509,6 +517,7 @@ impl Preferences {
             self.recent_repositories.push(RecentRepository {
                 path: path.clone(),
                 viewed_branch: None,
+                submodule: None,
             });
         }
         self.sort_repositories();
@@ -517,6 +526,85 @@ impl Preferences {
     fn sort_repositories(&mut self) {
         self.recent_repositories
             .sort_by_cached_key(|entry| (entry.path.name().to_lowercase(), entry.path.to_string()));
+    }
+
+    pub fn submodule(&self, path: &RepositoryLocation) -> Option<&RecentSubmodule> {
+        self.recent_repositories
+            .iter()
+            .find(|e| &e.path == path)?
+            .submodule
+            .as_ref()
+    }
+
+    pub fn repository_family(&self, path: &RepositoryLocation) -> RepositoryLocation {
+        let mut root = path;
+        // Preferences are persisted input; a malformed parent cycle must not hang navigation.
+        for _ in 0..self.recent_repositories.len() {
+            let Some(module) = self.submodule(root) else {
+                break;
+            };
+            root = &module.parent;
+        }
+        root.clone()
+    }
+
+    pub fn remember_submodules(
+        &mut self,
+        parent: &RepositoryLocation,
+        modules: &[crate::git::Submodule],
+    ) {
+        let removed: Vec<_> = self
+            .recent_repositories
+            .iter()
+            .filter(|e| {
+                e.submodule.as_ref().is_some_and(|s| &s.parent == parent)
+                    && !modules.iter().any(|m| m.location == e.path)
+            })
+            .map(|e| e.path.clone())
+            .collect();
+        for path in removed {
+            self.remove_repository_tree(&path);
+        }
+        for module in modules {
+            self.add_repository(module.location.clone());
+            let entry = self
+                .recent_repositories
+                .iter_mut()
+                .find(|e| e.path == module.location)
+                .unwrap();
+            entry.submodule = Some(RecentSubmodule {
+                parent: parent.clone(),
+                initialized: module.initialized,
+            });
+        }
+    }
+
+    pub fn remove_repository_tree(&mut self, path: &RepositoryLocation) -> Vec<RepositoryLocation> {
+        let mut removed = vec![path.clone()];
+        let mut index = 0;
+        while index < removed.len() {
+            for entry in &self.recent_repositories {
+                if entry
+                    .submodule
+                    .as_ref()
+                    .is_some_and(|s| s.parent == removed[index])
+                    && !removed.contains(&entry.path)
+                {
+                    removed.push(entry.path.clone());
+                }
+            }
+            index += 1;
+        }
+        self.recent_repositories
+            .retain(|e| !removed.contains(&e.path));
+        if self
+            .repository
+            .as_ref()
+            .is_some_and(|path| removed.contains(path))
+        {
+            self.repository = None;
+        }
+        removed
     }
 
     pub fn viewed_branch(&self, path: impl Into<RepositoryLocation>) -> Option<&str> {

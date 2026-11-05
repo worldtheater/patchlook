@@ -59,6 +59,8 @@ macOS release builds are signed and notarized. Linux packages are built on Ubunt
 2. Use **Changes** to review your working tree and staging area, or **History** to inspect commits.
 3. Use **Repos** to switch repositories or browse another branch.
 
+In source builds, **Repos** also lists submodules beneath their parent repository. Expand the parent and select a submodule to browse it as a separate repository. Uninitialized submodules are shown but cannot be opened; initialize them with Git and refresh the parent. Staging inside a submodule affects its own index; staging its entry in the parent records only the submodule revision.
+
 Refresh after making changes in another tool. Branch browsing uses the opened repository's Git references; fetch updates with your usual Git client.
 
 Text diffs require UTF-8. Supported images are shown as previews; other binary files are listed without a content diff.
