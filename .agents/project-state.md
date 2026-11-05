@@ -36,7 +36,6 @@
 - About、logo、许可证、中英文 README及真实浅暗截图；九语言主页提供语言菜单、直接切主题、平台下载浮层、Homebrew、单行 SHA-256 和复制，缺失／无效附件哈希阻止构建。SEO 元数据／JSON-LD／sitemap 与内容同源，Google 验证标签已部署；项目 Pages 的 sitemap 需自行提交站长工具。
 
 ### In Progress
-- [active] 更新 v0.1.7 草稿：提交默认关闭文本比对折行及暗色行号栏背景修复，重新构建三平台包；下一步核对云端检查、macOS 签名公证与新附件，保持草稿状态。
 - [paused] 提交说明局部高亮及实时拖选：用户决定等待 Kit Base 上游；当前 SelectableText 缺局部高亮 API，拖选变化未重绘。列表高亮已完成。
 
 ### Next
@@ -49,10 +48,10 @@
 暂无。
 
 ## Verification
-- 关闭文本比对默认折行并修正暗色主题字段后，本地 fmt、6 项文本比对回归及 Release 构建通过；本次横向滚动遮挡和窗口缩放视觉效果待用户验收，发行包更新在本轮进行。
+- 关闭文本比对默认折行并修正暗色主题字段后，本地 fmt、6 项文本比对回归及 Release 构建通过；本次横向滚动遮挡和窗口缩放视觉效果待用户验收；修复已提交 `fcf7e4a` 并更新 v0.1.7 草稿包。
 - v0.1.7 的三平台 CI 已通过 fmt、Clippy、常规串行回归、打包脚本测试及 Release 构建；macOS 128 项、Windows 126 项 Rust 测试通过，真实 SSH fixture 测试仍按配置忽略。覆盖文本比对、粘贴／文件拖入、再次编辑、刷新原子替换、标题对齐、多窗口显示偏好同步及源文件不变；Windows 子模块初始化误判修复后的 3 项集成回归均通过。此前 macOS 独立 Release 已检查浅／暗色和语言菜单；Windows／Linux 新窗口行为尚未实机验收。
 - 既有证据：子模块 118 项常规及 9 项 Docker SSH／界面测试通过，用户确认本地与 SSH 可用；暂存／撤销用真实提交树覆盖第三版本、改名、二进制、CRLF、意向添加、SHA-1／SHA-256及外部冲突。SSH 已覆盖密码／加密私钥、主机信任／变更拒绝、凭据隔离、断线重连及连接复用；用户确认 macOS → WSL、Windows SSH 可用。新功能之外未重跑这些真实远程测试。
-- [v0.1.7 草稿](https://github.com/worldtheater/patchlook/releases) 指向 `65d90e2`，中英文说明已保存；[构建 42053716637](https://github.com/worldtheater/patchlook/actions/runs/42053716637) 三平台及 Release 上传成功，四份附件已下载校验摘要和归档。macOS ZIP 内 App 签名／公证票据／Gatekeeper 及 DMG 票据本地复核通过，版本为 0.1.7。尚未公开发布；最新正式版仍为 v0.1.6，主页／Homebrew 只跟随正式发布。Cask 使用带 App 公证票据的 ZIP，独立 tap 自动校验安装、签名、公证后更新。
+- [v0.1.7 草稿](https://github.com/worldtheater/patchlook/releases) 指向 `fcf7e4a`，中英文说明已补充默认不折行及不透明行号栏；[构建 42063924209](https://github.com/worldtheater/patchlook/actions/runs/42063924209) 三平台及 Release 上传成功，四份附件已下载校验摘要和归档。macOS ZIP 内 App 签名／公证票据／Gatekeeper 及 DMG 票据本地复核通过，版本为 0.1.7。尚未公开发布；最新正式版仍为 v0.1.6，主页／Homebrew 只跟随正式发布。Cask 使用带 App 公证票据的 ZIP，独立 tap 自动校验安装、签名、公证后更新。
 - 主页构建及桌面／窄屏交互、复制哈希已验证；校验值版和 Google 验证标签版 `4e2b99e` 已部署，英文／中文 head 核对完成。Search Console 验证、sitemap 提交及实际收录／AI 引用无完成证据。
 
 ## Source Pointers
