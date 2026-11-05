@@ -11,7 +11,7 @@
 - `ssh_auth.rs` 以随机令牌保护本机内存通道供同一可执行文件 ASKPASS 取凭据，严格匹配目标提示；秘密不放参数、环境或磁盘。`ssh_host.rs` 排队展示首次 SHA-256 指纹确认，明确接受后由 OpenSSH 写入 known_hosts；后续严格验证，变更／撤销密钥拒绝连接，不自动覆盖；关闭窗口拒绝待处理请求。
 - `git/staging.rs` 用 add／reset 更新明确路径，用 `git apply --cached` 更新块；丢弃反向应用工作区，保留索引。写前核对状态及两侧补丁，拒绝过期选择；`review.rs` 合并同路径，通常显示 HEAD → 工作区并标注块状态，第三版本／抵消／无法映射时分成 HEAD → 索引、索引 → 工作区。`git/undo.rs` 保存相关索引或文件字节／权限，恢复前核对 HEAD 与快照，只恢复明确路径；区分意向添加与真实空文件，兼容 SHA-1／SHA-256。
 - `app.rs` 的 Working／History ChangeState 分离，Repos／History 共用历史快照；缓存列表、选择、树、滚动、diff及任务。已加载 Tab 不重读 Git；切仓库／刷新使另一快照失效，切浏览分支只重载历史。选择／目标／已加载仓库分离，取消过期任务；数据就绪后替换，Repos 进入新文件先展示目标加载态。写后只重算受影响路径、状态变化项及当前预览，复用其余统计／进度；仅当前仓库保留界面快照。
-- `git/submodules.rs` 从索引 gitlink 发现直接子模块，验证独立 `.git`，禁止回落父仓库；进入后复用普通仓库功能，嵌套按进入逐层发现。SSH 子模块共享父认证会话，断开／重连清理共享连接。Preferences 持久化父子关系及各自浏览分支，子模块不重复列在顶层；移除父记录连同后代，不删除文件。
+- `git/submodules.rs` 从索引 gitlink 发现直接子模块，在子模块目录内解析独立 `.git`，避免 Windows 反斜杠导致 gitfile 相对路径误判，禁止回落父仓库；进入后复用普通仓库功能，嵌套按进入逐层发现。SSH 子模块共享父认证会话，断开／重连清理共享连接。Preferences 持久化父子关系及各自浏览分支，子模块不重复列在顶层；移除父记录连同后代，不删除文件。
 - 文本 diff 解析、虚拟滚动、复制及主题来自 Kit DiffFile／DiffState；视口／行高变化在绘制后通知，不依赖移动窗口触发首次布局。`change_tree.rs` 分离已跟踪／未跟踪树，批量操作限后代；`image_diff.rs` 处理图片；`external_open.rs` 用平台 API 列出应用图标，打开工作区最新文件，删除文件打开退出时清理的旧版本副本。
 - `strings.rs` 管理九语言资源；`themes/` 统一配色，浅色沿用 Kit 语法色、正文深灰，暗色低饱和。Preferences 在系统配置目录原子替换 JSON。About 及 SSH Dialog 复用 Kit 弹窗／Presence，遮罩同步淡入淡出、遵循减少动态效果。Windows／Linux 窗口内菜单提供文本比对、关于、退出；macOS 系统菜单。
 - `desktop.yml` 在 main／PR 三平台检查与开发打包，匹配 Cargo 版本的 v 标签执行正式 macOS 签名／公证与三平台 Release 草稿。`scripts/package.py` 默认 ad-hoc，正式签名失败不降级。`website/` 无前端依赖，Python 生成九语言主页及最新正式 Release 的下载版本／链接／附件 SHA-256；Pages 在站点变更、正式发布／编辑时更新。独立 Homebrew tap 每六小时检查正式版本，下载并验证后更新 Cask；使用带已附加公证票据的 macOS ZIP，不同步草稿。
@@ -36,7 +36,6 @@
 - About、logo、许可证、中英文 README及真实浅暗截图；九语言主页提供语言菜单、直接切主题、平台下载浮层、Homebrew、单行 SHA-256 和复制，缺失／无效附件哈希阻止构建。SEO 元数据／JSON-LD／sitemap 与内容同源，Google 验证标签已部署；项目 Pages 的 sitemap 需自行提交站长工具。
 
 ### In Progress
-- [active] 准备 v0.1.7：main／标签已推送，中英文 Release 草稿已保存。首轮 macOS／Linux 通过，Windows 子模块识别因反斜杠路径失败；已改为在子目录内解析 `.git`，本地 3 项子模块回归通过。下一步重新构建草稿标签，核对三平台测试、签名公证及四附件后交付。
 - [paused] 提交说明局部高亮及实时拖选：用户决定等待 Kit Base 上游；当前 SelectableText 缺局部高亮 API，拖选变化未重绘。列表高亮已完成。
 
 ### Next
@@ -49,9 +48,9 @@
 暂无。
 
 ## Verification
-- 文本比对基础实现已通过 124 项常规串行回归；标题对齐、文件刷新和显示偏好共享后，macOS fmt、Clippy、52 项界面串行回归及 Release 构建通过（SSH fixture 测试未重跑）。覆盖空／相同文本、中文、CRLF/LF、末尾换行、两侧完整复制、粘贴、双文件原生拖入、失败保留输入、再次编辑、交换、独立新窗口和关闭、欢迎入口；源文件不变。新增回归覆盖多窗口语言／主题同步、输入保留及显示偏好保存不覆盖其他设置。编辑入口恢复常驻后，6 项文本比对回归与 Release 构建通过，覆盖文件比对后返回编辑、粘贴替换、再次比对且不修改原文件。新增检查覆盖前后标题坐标稳定、双文件刷新、读取失败不部分替换、混合输入保留粘贴侧及结果页换文件。此前独立 macOS Release 已检查浅／暗色和语言菜单；最新标题对齐／刷新通过界面测试，视觉待用户验收，现有预览与临时文本未关闭。Windows／Linux 新窗口行为尚未实机验收。
+- v0.1.7 的三平台 CI 已通过 fmt、Clippy、常规串行回归、打包脚本测试及 Release 构建；macOS 128 项、Windows 126 项 Rust 测试通过，真实 SSH fixture 测试仍按配置忽略。覆盖文本比对、粘贴／文件拖入、再次编辑、刷新原子替换、标题对齐、多窗口显示偏好同步及源文件不变；Windows 子模块初始化误判修复后的 3 项集成回归均通过。此前 macOS 独立 Release 已检查浅／暗色和语言菜单；Windows／Linux 新窗口行为尚未实机验收。
 - 既有证据：子模块 118 项常规及 9 项 Docker SSH／界面测试通过，用户确认本地与 SSH 可用；暂存／撤销用真实提交树覆盖第三版本、改名、二进制、CRLF、意向添加、SHA-1／SHA-256及外部冲突。SSH 已覆盖密码／加密私钥、主机信任／变更拒绝、凭据隔离、断线重连及连接复用；用户确认 macOS → WSL、Windows SSH 可用。新功能之外未重跑这些真实远程测试。
-- 最新正式版 [v0.1.6](https://github.com/worldtheater/patchlook/releases/tag/v0.1.6) 为 `96e3530`，三平台正式构建／四附件哈希已验证；macOS ZIP App 附加票据且通过 Gatekeeper，DMG 内 App 未附加票据，故 Cask 用 ZIP。独立 tap 已推送，自动校验安装、签名、公证后更新。
+- [v0.1.7 草稿](https://github.com/worldtheater/patchlook/releases) 指向 `65d90e2`，中英文说明已保存；[构建 42053716637](https://github.com/worldtheater/patchlook/actions/runs/42053716637) 三平台及 Release 上传成功，四份附件已下载校验摘要和归档。macOS ZIP 内 App 签名／公证票据／Gatekeeper 及 DMG 票据本地复核通过，版本为 0.1.7。尚未公开发布；最新正式版仍为 v0.1.6，主页／Homebrew 只跟随正式发布。Cask 使用带 App 公证票据的 ZIP，独立 tap 自动校验安装、签名、公证后更新。
 - 主页构建及桌面／窄屏交互、复制哈希已验证；校验值版和 Google 验证标签版 `4e2b99e` 已部署，英文／中文 head 核对完成。Search Console 验证、sitemap 提交及实际收录／AI 引用无完成证据。
 
 ## Source Pointers
