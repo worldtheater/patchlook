@@ -36,7 +36,7 @@
 - About、logo、许可证、中英文 README及真实浅暗截图；九语言主页提供语言菜单、直接切主题、平台下载浮层、Homebrew、单行 SHA-256 和复制，缺失／无效附件哈希阻止构建。SEO 元数据／JSON-LD／sitemap 与内容同源，Google 验证标签已部署；项目 Pages 的 sitemap 需自行提交站长工具。
 
 ### In Progress
-- [active] 准备 v0.1.7：包含子模块浏览及独立文本／文件比对，版本和 README 已更新；下一步推送 main／版本标签，检查三平台构建及 macOS 签名公证，将四份安装包留在 Release 草稿。
+- [active] 准备 v0.1.7：main／标签已推送，中英文 Release 草稿已保存。首轮 macOS／Linux 通过，Windows 子模块识别因反斜杠路径失败；已改为在子目录内解析 `.git`，本地 3 项子模块回归通过。下一步重新构建草稿标签，核对三平台测试、签名公证及四附件后交付。
 - [paused] 提交说明局部高亮及实时拖选：用户决定等待 Kit Base 上游；当前 SelectableText 缺局部高亮 API，拖选变化未重绘。列表高亮已完成。
 
 ### Next

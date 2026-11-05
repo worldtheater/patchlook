@@ -45,17 +45,11 @@ impl Repository {
     fn has_repository_directory(&self, directory: &Path) -> Result<bool> {
         // Inspect the child's own .git; ordinary discovery in an empty child
         // directory would walk upwards and accidentally reopen its parent.
-        let result = self
-            .command()
-            .args(["rev-parse", "--resolve-git-dir"])
-            .arg(if self.is_remote() {
-                PathBuf::from(format!(
-                    "{}/.git",
-                    directory.to_string_lossy().trim_end_matches('/')
-                ))
-            } else {
-                directory.join(".git")
-            })
+        // Resolve relative to the child: Git's gitfile reader expects '/' in
+        // paths, while Path::join inserts '\\' on Windows.
+        let result = command(directory)
+            .remote(self.remote.clone())
+            .args(["rev-parse", "--resolve-git-dir", ".git"])
             .output()?;
         Ok(result.status.success())
     }
