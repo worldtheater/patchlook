@@ -14,7 +14,7 @@
 - `git/submodules.rs` 从索引 gitlink 发现直接子模块，在子模块目录内解析独立 `.git`，避免 Windows 反斜杠导致 gitfile 相对路径误判，禁止回落父仓库；进入后复用普通仓库功能，嵌套按进入逐层发现。SSH 子模块共享父认证会话，断开／重连清理共享连接。Preferences 持久化父子关系及各自浏览分支，子模块不重复列在顶层；移除父记录连同后代，不删除文件。
 - 文本 diff 解析、虚拟滚动、复制及主题来自 Kit DiffFile／DiffState；视口／行高变化在绘制后通知，不依赖移动窗口触发首次布局。`change_tree.rs` 分离已跟踪／未跟踪树，批量操作限后代；`image_diff.rs` 处理图片；`external_open.rs` 用平台 API 列出应用图标，打开工作区最新文件，删除文件打开退出时清理的旧版本副本。
 - `strings.rs` 管理九语言资源；`themes/` 统一配色，浅色沿用 Kit 语法色、正文深灰，暗色低饱和；暗色编辑器主题按当前 syntect 后端使用 `editor_*` 字段，行号栏继承不透明编辑器背景，避免横向滚动透字。Preferences 在系统配置目录原子替换 JSON。About 及 SSH Dialog 复用 Kit 弹窗／Presence，遮罩同步淡入淡出、遵循减少动态效果。Windows／Linux 窗口内菜单提供文本比对、关于、退出；macOS 系统菜单。
-- `desktop.yml` 在 main／PR 三平台检查与开发打包，匹配 Cargo 版本的 v 标签执行正式 macOS 签名／公证与三平台 Release 草稿。`scripts/package.py` 默认 ad-hoc，正式签名失败不降级。`website/` 无前端依赖，Python 生成九语言主页及最新正式 Release 的下载版本／链接／附件 SHA-256；Pages 在站点变更、正式发布／编辑时更新。独立 Homebrew tap 每六小时检查正式版本，下载并验证后更新 Cask；使用带已附加公证票据的 macOS ZIP，不同步草稿。
+- `desktop.yml` 在 main／PR 三平台检查与开发打包，匹配 Cargo 版本的 v 标签执行正式 macOS 签名／公证与三平台 Release 草稿。`scripts/package.py` 默认 ad-hoc，正式签名失败不降级。`website/` 无前端依赖，Python 生成九语言主页及最新正式 Release 的下载版本／链接／附件 SHA-256；Pages 配置为站点变更、正式发布／编辑时更新；当前环境规则仅允许 main 部署，release 标签触发会被拒绝，需手动从 main 运行。独立 Homebrew tap 每六小时检查正式版本，下载并验证后更新 Cask；使用带已附加公证票据的 macOS ZIP，不同步草稿。
 
 ## Project Conventions
 - GPUI 统一从 `gpui_kit` 导入，复用主题／控件；界面文案在九份 `locales/*.json`，键及占位符一致。Kit 0.8.0 固定 fork revision `907fa984b7a1f316fc767ccf3e25c10b54932518`（已推送），维护 Cargo.lock，不提交本机 path override；升级及补丁归属见 `docs/development.md`。
@@ -42,17 +42,18 @@
 暂无已确认的后续范围。
 
 ## Known Problems and Risks
+- P2 [confirmed]: Pages 的 release 事件构建成功，但标签不在 github-pages 环境允许范围，自动部署失败（`42067849519`）；main 手动部署可用。后续自动更新需协调发布触发方式与环境规则。
 - P2 [risk]: diff 布局／上下文／滚动依赖 Kit fork；升级核对上游合入，并保留消费方 `tests/diff_layout.rs`、`tests/scroll_bounce.rs` 回归。
 
 ## Open Decisions
 暂无。
 
 ## Verification
-- 关闭文本比对默认折行并修正暗色主题字段后，本地 fmt、6 项文本比对回归及 Release 构建通过；本次横向滚动遮挡和窗口缩放视觉效果待用户验收；修复已提交 `fcf7e4a` 并更新 v0.1.7 草稿包。
+- 关闭文本比对默认折行并修正暗色主题字段后，本地 fmt、6 项文本比对回归及 Release 构建通过；本次横向滚动遮挡和窗口缩放视觉效果待用户验收；修复已提交 `fcf7e4a`，包含于已发布的 v0.1.7。
 - v0.1.7 的三平台 CI 已通过 fmt、Clippy、常规串行回归、打包脚本测试及 Release 构建；macOS 128 项、Windows 126 项 Rust 测试通过，真实 SSH fixture 测试仍按配置忽略。覆盖文本比对、粘贴／文件拖入、再次编辑、刷新原子替换、标题对齐、多窗口显示偏好同步及源文件不变；Windows 子模块初始化误判修复后的 3 项集成回归均通过。此前 macOS 独立 Release 已检查浅／暗色和语言菜单；Windows／Linux 新窗口行为尚未实机验收。
 - 既有证据：子模块 118 项常规及 9 项 Docker SSH／界面测试通过，用户确认本地与 SSH 可用；暂存／撤销用真实提交树覆盖第三版本、改名、二进制、CRLF、意向添加、SHA-1／SHA-256及外部冲突。SSH 已覆盖密码／加密私钥、主机信任／变更拒绝、凭据隔离、断线重连及连接复用；用户确认 macOS → WSL、Windows SSH 可用。新功能之外未重跑这些真实远程测试。
-- [v0.1.7 草稿](https://github.com/worldtheater/patchlook/releases) 指向 `fcf7e4a`，中英文说明已补充默认不折行及不透明行号栏；[构建 42063924209](https://github.com/worldtheater/patchlook/actions/runs/42063924209) 三平台及 Release 上传成功，四份附件已下载校验摘要和归档。macOS ZIP 内 App 签名／公证票据／Gatekeeper 及 DMG 票据本地复核通过，版本为 0.1.7。尚未公开发布；最新正式版仍为 v0.1.6，主页／Homebrew 只跟随正式发布。Cask 使用带 App 公证票据的 ZIP，独立 tap 自动校验安装、签名、公证后更新。
-- 主页构建及桌面／窄屏交互、复制哈希已验证；校验值版和 Google 验证标签版 `4e2b99e` 已部署，英文／中文 head 核对完成。Search Console 验证、sitemap 提交及实际收录／AI 引用无完成证据。
+- [v0.1.7 正式版](https://github.com/worldtheater/patchlook/releases/tag/v0.1.7) 指向 `fcf7e4a`，中英文说明已补充默认不折行及不透明行号栏；[构建 42063924209](https://github.com/worldtheater/patchlook/actions/runs/42063924209) 三平台及 Release 上传成功，四份附件已下载校验摘要和归档。macOS ZIP 内 App 签名／公证票据／Gatekeeper 及 DMG 票据本地复核通过，版本为 0.1.7。已于 2026-11-05 16:46 UTC 发布；主页已同步 v0.1.7，Homebrew 只跟随正式发布，其 v0.1.7 同步结果未核实。Cask 使用带 App 公证票据的 ZIP，独立 tap 自动校验安装、签名、公证后更新。
+- 主页既有桌面／窄屏交互、复制哈希及 Google 验证标签已验证；九项构建测试通过，从 main 手动部署 `42073367500` 成功，线上九语言版本、三平台下载链接及 SHA-256 均与 v0.1.7 Release 附件一致，介绍文案未变。Search Console 验证、sitemap 提交及实际收录／AI 引用无完成证据。
 
 ## Source Pointers
 - `src/{main,app,text_compare,text_diff,ui,preferences,strings}.rs`、`locales/`、`themes/` — 窗口、状态、文本比对、偏好和多语言。
