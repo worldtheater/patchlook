@@ -5130,6 +5130,7 @@ dependencies = [
  "png 0.18.1",
  "serde",
  "serde_json",
+ "similar",
  "sys-locale",
  "tempfile",
  "windows 0.61.3",

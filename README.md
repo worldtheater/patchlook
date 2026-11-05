@@ -65,6 +65,8 @@ Refresh after making changes in another tool. Branch browsing uses the opened re
 
 Text diffs require UTF-8. Supported images are shown as previews; other binary files are listed without a content diff.
 
+Source builds also include **New text comparison** in the File menu (the **≡** menu on Windows/Linux), on the welcome screen, or via **⌘N / Ctrl+N**. Paste text or open/drop UTF-8 files on either side, then use the play icon to compare (**⌘Enter / Ctrl+Enter**). The pencil returns either source to editing; refresh (**⌘R / Ctrl+R**) rereads opened files and updates the result, keeping pasted text. This opens a separate, temporary window; source files are never overwritten and the texts are not saved.
+
 ### Connect to a Linux server
 
 Available in **v0.1.6+**. Remote repositories are always read-only.

@@ -7,6 +7,8 @@ mod image_diff;
 mod remote_repository;
 mod ssh_host;
 mod strings;
+mod text_compare;
+mod ui;
 use app::{About, OpenRepository, Patchlook, Quit, Refresh};
 use gpui_kit::*;
 use strings::tr;
@@ -50,6 +52,7 @@ fn main() -> anyhow::Result<()> {
                 theme.light_theme = std::rc::Rc::new(light);
             });
             cx.on_action(|_: &Quit, cx| cx.quit());
+            text_compare::init(cx);
             cx.bind_keys([
                 KeyBinding::new("secondary-o", OpenRepository, None),
                 KeyBinding::new("secondary-r", Refresh, None),
@@ -135,6 +138,8 @@ fn update_menus(cx: &mut App) {
             disabled: false,
             name: tr("file_menu").into(),
             items: vec![
+                MenuItem::action(tr("new_text_comparison"), text_compare::NewTextComparison),
+                MenuItem::separator(),
                 MenuItem::action(tr("open_repository"), OpenRepository),
                 MenuItem::action(tr("refresh"), Refresh),
             ],

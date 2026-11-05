@@ -2,15 +2,16 @@ use crate::{
     change_tree::{ChangeTree, file_status_color, stats_label},
     file_icons::file_icon,
     image_diff::{ImageDiff, ImageVersions, image_format},
-    strings::{language_name, tr},
+    strings::tr,
+    ui::{DisplaySettings, apply_appearance, apply_language, icon_button, toolbar_divider},
 };
 use gpui_kit::assets::IconName;
 use gpui_kit::base::{SelectableText, TestSupportExt};
 use gpui_kit::component::dialog::{DialogAction, DialogClose, DialogFooter};
 use gpui_kit::{
     component::{
-        ActiveTheme, Disableable, FocusableExt, Icon, Selectable, Sizable, Theme, ThemeMode,
-        TitleBar, WindowExt,
+        ActiveTheme, Disableable, FocusableExt, Icon, Selectable, Sizable, Theme, TitleBar,
+        WindowExt,
         button::{Button, ButtonCustomVariant, ButtonVariant, ButtonVariants},
         diff::{
             Diff, DiffChangeIndicator, DiffFile, DiffHunkSeparator, DiffLinePosition, DiffMode,
@@ -434,16 +435,23 @@ impl Patchlook {
 
     fn from_preferences(
         initial: Option<RepositoryLocation>,
-        preferences: Preferences,
+        mut preferences: Preferences,
         error: Option<String>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        DisplaySettings::initialize(&preferences, cx);
+        DisplaySettings::get(cx).copy_to(&mut preferences);
         apply_appearance(preferences.appearance, window, cx);
         apply_language(preferences.language, cx);
         let history_search =
             cx.new(|cx| InputState::new(window, cx).placeholder(tr("search_commits_placeholder")));
         let subscriptions = vec![
+            cx.observe_global_in::<DisplaySettings>(window, |this, window, cx| {
+                DisplaySettings::get(cx).copy_to(&mut this.preferences);
+                this.update_translations(window, cx);
+                cx.notify();
+            }),
             cx.subscribe(&history_search, |this, input, event, cx| {
                 if matches!(event, TextInputEvent::PressEnter { .. })
                     || (matches!(event, TextInputEvent::Change)
@@ -2039,44 +2047,25 @@ impl Patchlook {
     fn set_language(&mut self, language: Language, window: &mut Window, cx: &mut Context<Self>) {
         self.preferences.language = language;
         apply_language(language, cx);
+        self.update_translations(window, cx);
+        self.save_preferences();
+        cx.notify();
+    }
+
+    fn update_translations(&self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(tree) = &self.working.change_tree {
             tree.update_group_labels(cx);
         }
         self.history_search.update(cx, |input, cx| {
             input.set_placeholder(tr("search_commits_placeholder"), window, cx);
         });
-        self.save_preferences();
-        cx.notify();
     }
-}
-
-fn apply_language(language: Language, cx: &mut App) {
-    let language = language.resolve(sys_locale::get_locales());
-    let code = language.code().expect("Resolved language has a locale");
-    if &*component::locale() != code {
-        component::set_locale(code);
-        cx.refresh_windows();
-    }
-    crate::update_menus(cx);
 }
 
 fn diff_mode(layout: Layout) -> DiffMode {
     match layout {
         Layout::Split => DiffMode::Split,
         Layout::Inline => DiffMode::Unified,
-    }
-}
-
-fn apply_appearance(appearance: Appearance, window: &mut Window, cx: &mut App) {
-    cx.set_window_appearance(match appearance {
-        Appearance::System => None,
-        Appearance::Light => Some(WindowAppearance::Light),
-        Appearance::Dark => Some(WindowAppearance::Dark),
-    });
-    match appearance {
-        Appearance::System => Theme::sync_system_appearance(Some(window), cx),
-        Appearance::Light => Theme::change(ThemeMode::Light, Some(window), cx),
-        Appearance::Dark => Theme::change(ThemeMode::Dark, Some(window), cx),
     }
 }
 
@@ -2133,23 +2122,6 @@ fn search_match_ranges(text: &str, query: &str) -> Vec<Range<usize>> {
     ranges
 }
 
-fn appearance_label(appearance: Appearance) -> (IconName, &'static str) {
-    match appearance {
-        Appearance::Light => (IconName::Sun, "light"),
-        Appearance::Dark => (IconName::Moon, "dark"),
-        Appearance::System => (IconName::Monitor, "system"),
-    }
-}
-
-fn icon_button(id: &'static str, icon: IconName, label: &'static str) -> Button {
-    Button::new(id)
-        .icon(icon)
-        .small()
-        .ghost()
-        .tooltip(tr(label))
-        .accessibility_label(tr(label))
-}
-
 fn list_action_style(cx: &App) -> ButtonCustomVariant {
     ButtonCustomVariant::new(cx)
         .hover(cx.theme().foreground.opacity(0.12))
@@ -2184,15 +2156,6 @@ fn application_menu_item(
             .child(icon)
             .child(name.clone())
     })
-}
-
-fn toolbar_divider(cx: &App) -> Div {
-    div()
-        .flex_none()
-        .w(px(1.))
-        .h(px(14.))
-        .mx_1()
-        .bg(cx.theme().border)
 }
 
 fn list_scrollbar(id: &'static str, handle: &(impl ScrollbarHandle + Clone)) -> Div {
@@ -2280,6 +2243,11 @@ impl Patchlook {
                     menu.action_context(
                         window.focused(cx).unwrap_or_else(|| fallback_focus.clone()),
                     )
+                    .menu(
+                        tr("new_text_comparison"),
+                        Box::new(crate::text_compare::NewTextComparison),
+                    )
+                    .separator()
                     .menu(tr("about"), Box::new(About))
                     .separator()
                     .menu(tr("quit"), Box::new(Quit))
@@ -2289,37 +2257,9 @@ impl Patchlook {
 
     fn language_menu(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let app = cx.entity().downgrade();
-        Button::new("language")
-            .icon(IconName::Languages)
-            .child(div().text_xs().child(tr("language_short")))
-            .small()
-            .ghost()
-            .tooltip(tr("language"))
-            .accessibility_label(tr("language"))
-            .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, cx| {
-                let Some(entity) = app.upgrade() else {
-                    return menu;
-                };
-                let selected = entity.read(cx).preferences.language;
-                Language::ALL.into_iter().fold(
-                    menu.min_w(px(210.))
-                        .max_h(px(360.))
-                        .scrollable(true)
-                        .check_side(component::Side::Right),
-                    |menu, language| {
-                        let app = app.clone();
-                        menu.item(
-                            PopupMenuItem::new(language_name(language))
-                                .checked(selected == language)
-                                .on_click(move |_, window, cx| {
-                                    let _ = app.update(cx, |this, cx| {
-                                        this.set_language(language, window, cx)
-                                    });
-                                }),
-                        )
-                    },
-                )
-            })
+        crate::ui::language_menu(move |language, window, cx| {
+            let _ = app.update(cx, |this, cx| this.set_language(language, window, cx));
+        })
     }
 
     fn external_file_target(&self) -> Option<FileToOpen> {
@@ -2530,21 +2470,11 @@ impl Patchlook {
                         .child(div().occlude().child(self.language_menu(cx))),
                 )
                 .child({
-                    let (icon, current) = appearance_label(self.preferences.appearance);
-                    let (_, next) = appearance_label(self.preferences.appearance.next());
-                    let label = tr("theme_cycle")
-                        .replace("{current}", tr(current))
-                        .replace("{next}", tr(next));
-                    Button::new("theme")
-                        .occlude()
-                        .icon(icon)
-                        .small()
-                        .ghost()
-                        .tooltip(label.clone())
-                        .accessibility_label(label)
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.set_appearance(this.preferences.appearance.next(), window, cx);
-                        }))
+                    let app = cx.entity().downgrade();
+                    crate::ui::theme_button(cx, move |appearance, window, cx| {
+                        let _ =
+                            app.update(cx, |this, cx| this.set_appearance(appearance, window, cx));
+                    })
                 }),
         )
     }
@@ -4130,6 +4060,14 @@ impl Render for Patchlook {
                                     })),
                             ),
                     )
+                    .child(
+                        Button::new("welcome-compare")
+                            .ghost()
+                            .label(tr("new_text_comparison"))
+                            .on_click(|_, _, cx| {
+                                cx.dispatch_action(&crate::text_compare::NewTextComparison)
+                            }),
+                    )
                     .into_any_element()
             }
         } else {
@@ -4254,6 +4192,7 @@ impl Render for Patchlook {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::strings::language_name;
     use core::prelude::v1::test;
     use gpui_kit::component::scroll::ScrollbarHandle;
     use gpui_kit::test::{TestQueryExt, TestWindowExt};
@@ -6907,6 +6846,84 @@ mod tests {
     }
 
     #[gpui_kit::test]
+    fn display_changes_from_another_window_survive_repository_preference_writes(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(gpui_kit::init);
+        let (handle, app) = cx.update(|cx| {
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                cx.new(|cx| {
+                    Patchlook::from_preferences(None, Preferences::default(), None, window, cx)
+                })
+            })
+            .unwrap()
+        });
+        let (other_handle, _) = cx.update(|cx| {
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                cx.new(|cx| test_app(window, cx))
+            })
+            .unwrap()
+        });
+        cx.run_until_parked();
+        cx.update_window(other_handle, |_, window, cx| {
+            apply_language(Language::English, cx);
+            apply_appearance(Appearance::Dark, window, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(app.read(cx).preferences.language, Language::English);
+            assert_eq!(app.read(cx).preferences.appearance, Appearance::Dark);
+            app.update(cx, |this, _| {
+                this.preferences.tree_file_list = false;
+                this.save_preferences();
+            });
+            let saved: Preferences = serde_json::from_slice(
+                &std::fs::read(
+                    app.read(cx)
+                        .preferences_directory
+                        .path()
+                        .join("preferences.json"),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(saved.language, Language::English);
+            assert_eq!(saved.appearance, Appearance::Dark);
+            assert!(!saved.tree_file_list);
+            assert!(app.read(cx).load_task.is_none());
+        })
+        .unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn welcome_opens_an_independent_text_comparison(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::text_compare::init(cx);
+        });
+        let (handle, app) = cx.update(|cx| {
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                cx.new(|cx| test_app(window, cx))
+            })
+            .unwrap()
+        });
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click("welcome-compare", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.read(|cx| {
+            assert_eq!(cx.windows().len(), 2);
+            assert!(app.read(cx).repository.is_none());
+            assert!(app.read(cx).load_task.is_none());
+            assert!(app.read(cx).preferences.recent_repositories.is_empty());
+        });
+    }
+
+    #[gpui_kit::test]
     fn application_menu_opens_about_and_dispatches_quit(cx: &mut TestAppContext) {
         use std::{cell::Cell, rc::Rc};
 
@@ -6963,9 +6980,10 @@ mod tests {
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
             let menu = window.within("popup-menu");
-            assert_eq!(menu.find(0usize).label(), Some(tr("about")));
-            assert_eq!(menu.find(2usize).label(), Some(tr("quit")));
-            assert!(menu.try_find(3usize).is_none());
+            assert_eq!(menu.find(0usize).label(), Some(tr("new_text_comparison")));
+            assert_eq!(menu.find(2usize).label(), Some(tr("about")));
+            assert_eq!(menu.find(4usize).label(), Some(tr("quit")));
+            assert!(menu.try_find(5usize).is_none());
             window.press("escape", cx);
         })
         .unwrap();
@@ -6989,7 +7007,7 @@ mod tests {
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
             assert!(window.try_find("popup-menu").is_some());
-            window.within("popup-menu").click(0usize, cx);
+            window.within("popup-menu").click(2usize, cx);
         })
         .unwrap();
         cx.run_until_parked();
