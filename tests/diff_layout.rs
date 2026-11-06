@@ -380,6 +380,114 @@ fn wave_disclosure_expands_hidden_context(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn wave_disclosure_reveals_at_most_twenty_lines_in_each_direction(cx: &mut TestAppContext) {
+    cx.update(gpui_kit::init);
+    // A final single hidden line must survive the previous 20-line disclosure.
+    for mode in [DiffMode::Split, DiffMode::Unified] {
+        for (leading_change, trailing_change, context_lines, steps) in [
+            (false, true, 41, vec![("expand-up", 0), ("expand-up", 0)]),
+            (
+                true,
+                false,
+                41,
+                vec![("expand-down", 1), ("expand-down", 21)],
+            ),
+            (
+                true,
+                true,
+                61,
+                vec![("expand-down", 1), ("expand-up", 21), ("expand-down", 21)],
+            ),
+        ] {
+            let total = context_lines + usize::from(leading_change) + usize::from(trailing_change);
+            let patch = format!(
+                "--- a/context.txt\n+++ b/context.txt\n@@ -1,{total} +1,{total} @@\n{}{}{}",
+                if leading_change {
+                    "-old start\n+new start\n"
+                } else {
+                    ""
+                },
+                (0..context_lines)
+                    .map(|i| format!(" context_{i}\n"))
+                    .collect::<String>(),
+                if trailing_change {
+                    "-old end\n+new end\n"
+                } else {
+                    ""
+                },
+            );
+            let (handle, viewer) = cx.update(|cx| {
+                gpui_kit::open_window(
+                    WindowOptions {
+                        window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                            Point::default(),
+                            size(px(1000.), px(1800.)),
+                        ))),
+                        ..Default::default()
+                    },
+                    cx,
+                    |_, cx| {
+                        cx.new(|cx| Viewer {
+                            state: cx.new(|cx| {
+                                DiffState::new(DiffFile::parse(&patch).unwrap(), cx)
+                                    .with_mode(mode)
+                                    .with_context_lines(Some(0))
+                            }),
+                            wrap: false,
+                        })
+                    },
+                )
+                .unwrap()
+            });
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                window.render_frame(cx);
+                let state = viewer.read(cx).state.clone();
+                let first = usize::from(leading_change);
+                assert_eq!(
+                    window.try_find(("expand-down", first)).is_some(),
+                    leading_change
+                );
+                assert_eq!(
+                    window.try_find(("expand-up", first)).is_some(),
+                    trailing_change
+                );
+                assert!(window.try_find(("expand", first)).is_none());
+                let visible_context = |window: &Window| {
+                    window
+                        .find_all("source")
+                        .iter()
+                        .filter_map(|cell| cell.label())
+                        .filter(|label| label.starts_with("context_"))
+                        .map(str::to_owned)
+                        .collect::<std::collections::HashSet<_>>()
+                };
+                for (direction, start) in steps {
+                    let before = visible_context(window).len();
+                    window.click((direction, start as usize), cx);
+                    window.render_frame(cx);
+                    window.render_frame(cx);
+                    assert_eq!(visible_context(window).len(), before + 20);
+                    assert!(state.read(cx).has_collapsed_context());
+                    let shown = if direction == "expand-up" {
+                        format!("context_{}", context_lines - 1)
+                    } else {
+                        "context_0".to_owned()
+                    };
+                    assert!(visible_context(window).contains(&shown));
+                    assert!(state.read(cx).selected_lines().is_none());
+                }
+                let remaining: usize = if leading_change { 41 } else { 0 };
+                window.click(("expand", remaining), cx);
+                window.render_frame(cx);
+                assert!(!state.read(cx).has_collapsed_context());
+            })
+            .unwrap();
+        }
+    }
+}
+
+#[gpui_kit::test]
 fn context_arrows_collapse_only_their_segment_in_both_modes(cx: &mut TestAppContext) {
     cx.update(gpui_kit::init);
     let context = |prefix| {

@@ -218,7 +218,7 @@ Check the existing submission before rerunning a failed release. An `Accepted` r
 
 Patchlook uses the [GPUI Kit fork](https://github.com/worldtheater/gpui-kit/tree/codex/diff-tool-patches), on the `codex/diff-tool-patches` branch. [Cargo.toml](../Cargo.toml) pins its Git revision through `[patch.crates-io]`; [Cargo.lock](../Cargo.lock) is checked in. Cargo fetches the source automatically, so normal builds need neither a submodule nor a sibling checkout.
 
-The patch series starts from the GPUI Kit 0.8.0 source commit `1676826d9d49b90f4d7b6808b69924f58796f6f1`. Its current tip is `907fa984b7a1f316fc767ccf3e25c10b54932518`.
+The patch series starts from the GPUI Kit 0.8.0 source commit `1676826d9d49b90f4d7b6808b69924f58796f6f1`. Its current tip is `a816d86870c469b472c2453a10945d2564d380be`.
 
 | Commit | Purpose |
 | --- | --- |
@@ -236,6 +236,7 @@ The patch series starts from the GPUI Kit 0.8.0 source commit `1676826d9d49b90f4
 | `9bc37a46` | Isolate gutter actions from line selection and let applications disable mouse selection through line numbers. |
 | `0917a556` | Add a smaller switch size and expose leading label placement while retaining standard switch behavior. |
 | `907fa984` | Apply dialog entrance opacity inside the deferred overlay host so the backdrop and surface fade together. |
+| `a816d868` | Expand wave-separated context in directional steps of at most 20 lines, preserving the hidden remainder and the toolbar's expand-all command. |
 
 When updating GPUI Kit:
 

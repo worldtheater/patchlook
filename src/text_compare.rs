@@ -1,7 +1,10 @@
 use crate::{
     app::{About, Quit},
     strings::tr,
-    ui::{DisplaySettings, apply_appearance, apply_language, icon_button, toolbar_divider},
+    ui::{
+        DIFF_INLINE_MAX_LINE_BYTES, DisplaySettings, apply_appearance, apply_language, icon_button,
+        toolbar_divider,
+    },
 };
 use gpui_kit::{
     assets::IconName,
@@ -139,7 +142,11 @@ impl TextComparison {
             }),
             path: None,
         });
-        let diff = cx.new(|cx| DiffState::new([], cx).with_mode(DiffMode::Split));
+        let diff = cx.new(|cx| {
+            DiffState::new([], cx)
+                .with_mode(DiffMode::Split)
+                .with_inline_max_line_length(DIFF_INLINE_MAX_LINE_BYTES)
+        });
         let subscriptions = vec![
             cx.observe(&diff, |_, _, cx| cx.notify()),
             cx.observe_global_in::<DisplaySettings>(window, |this, window, cx| {

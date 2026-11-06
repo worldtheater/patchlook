@@ -17,7 +17,7 @@
 - `desktop.yml` 在 main／PR 三平台检查与开发打包，匹配 Cargo 版本的 v 标签执行正式 macOS 签名／公证与三平台 Release 草稿。`scripts/package.py` 默认 ad-hoc，正式签名失败不降级。`website/` 无前端依赖，Python 生成九语言主页及最新正式 Release 的下载版本／链接／附件 SHA-256；Pages 配置为站点变更、正式发布／编辑时更新；当前环境规则仅允许 main 部署，release 标签触发会被拒绝，需手动从 main 运行。独立 Homebrew tap 每六小时检查正式版本，下载并验证后更新 Cask；使用带已附加公证票据的 macOS ZIP，不同步草稿。
 
 ## Project Conventions
-- GPUI 统一从 `gpui_kit` 导入，复用主题／控件；界面文案在九份 `locales/*.json`，键及占位符一致。Kit 0.8.0 固定 fork revision `907fa984b7a1f316fc767ccf3e25c10b54932518`（已推送），维护 Cargo.lock，不提交本机 path override；升级及补丁归属见 `docs/development.md`。
+- GPUI 统一从 `gpui_kit` 导入，复用主题／控件；界面文案在九份 `locales/*.json`，键及占位符一致。Kit 0.8.0 固定 fork revision `a816d86870c469b472c2453a10945d2564d380be`（已推送），维护 Cargo.lock，不提交本机 path override；升级及补丁归属见 `docs/development.md`。
 - `.gitattributes` 强制 shell 脚本 LF；嵌入 SSH worker 不得随 Windows 检出转 CRLF，所有平台测试内嵌脚本换行。
 - Git 基线：未暂存比较索引与工作区，暂存比较 HEAD 与索引；根提交按新增，合并提交比较第一父提交。历史／搜索固定首次解析的分支 tip；搜索完整消息忽略大小写的子串或 SHA 前缀，每页 100 条加一条前瞻。
 - 测试共享进程级 locale，须串行：`cargo fmt --all -- --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked -- --test-threads=1`；交互验收使用 Release，打包改动另跑 Python 3.11+ 的 scripts 单元测试。系统应用查询／本机认证 socket 测试需要系统能力，不以沙箱失败判功能失败。
@@ -32,7 +32,7 @@
 - Repos 三栏、Changes／History 保留 Tab 选择、滚动和筛选；Recent／Branches 默认等高，拖动比例持久化。分支整行切浏览、眼睛标记查看项，不改 HEAD；顶部分支随视图，History 不重复标分支。历史搜索超过 20 条常驻，Load more 为尾项；消息匹配高亮、SHA 不高亮；提交说明可选／显隐，点击 SHA 复制后原位短暂提示。
 - 文件树／平铺与统计：主流类型图标、状态色、根路径 `.`、移动来源；键盘父子／相邻导航，选文件均打开 diff。目录行 22 px、图标树 16／平铺 20 px；轻填充文件夹、紧凑勾选间距，路径 tooltip 只绑名称。120 ms 内连续选文件尾随防抖，单次立即加载。
 - 本地写入：同文件单条，空框／横线／对号表示暂存程度，部分显示 x/y；目录／分组批量操作限后代。右侧行号栏勾选连续块，左侧 `»` 确认丢弃，无单行入口或额外缩进；已暂存背景保留 30%，hover 半透明，行号不触发整行选择。撤销／重做每次点击一步，跨文件共用栈，刷新保留，切仓库／关窗口清空，外部冲突拒绝覆盖；二进制／非普通文件仅整文件操作，冲突交外部工具。
-- Git diff：并排／行内、语法与行内高亮、折行、同步滚动、复制、上下文折叠；改动状态改变而文本不变时不替换 diff，补丁变动保留稳定源视口。图片支持适应／1:1／缩放。持久化外观、语言、diff 布局、文件列表样式、行号／统计／折行／说明、Recent、浏览分支和 Repos 侧栏比例；其余窗口／Tab／选择／搜索不保存。每窗口默认绿灯闭锁只读，橙灯开锁读写；锁按钮无文字、tooltip 说明，操作中禁用保持外观。
+- Git diff：并排／行内、语法与行内高亮、折行、同步滚动、复制、上下文折叠；仓库和独立文本窗口共用 3,000 字节的单行行内高亮上限，超长行保留整行底色；波浪分隔线按方向每次最多展开 20 行，剩余一行仍折叠，顶部全部展开／收起保留；改动状态改变而文本不变时不替换 diff，补丁变动保留稳定源视口。图片支持适应／1:1／缩放。持久化外观、语言、diff 布局、文件列表样式、行号／统计／折行／说明、Recent、浏览分支和 Repos 侧栏比例；其余窗口／Tab／选择／搜索不保存。每窗口默认绿灯闭锁只读，橙灯开锁读写；锁按钮无文字、tooltip 说明，操作中禁用保持外观。
 - About、logo、许可证、中英文 README及真实浅暗截图；九语言主页提供语言菜单、直接切主题、平台下载浮层、Homebrew、单行 SHA-256 和复制，缺失／无效附件哈希阻止构建。SEO 元数据／JSON-LD／sitemap 与内容同源，Google 验证标签已部署；项目 Pages 的 sitemap 需自行提交站长工具。
 
 ### In Progress
@@ -49,7 +49,7 @@
 暂无。
 
 ## Verification
-- 关闭文本比对默认折行并修正暗色主题字段后，本地 fmt、6 项文本比对回归及 Release 构建通过；本次横向滚动遮挡和窗口缩放视觉效果待用户验收；修复已提交 `fcf7e4a`，包含于已发布的 v0.1.7。
+- 行内高亮上限 3,000 字节与波浪分隔线分批展开已通过本地 fmt、Clippy（all targets，deny warnings）、9 项 diff 布局／交互回归、3 项滚动回归及 Release 构建。新增用例覆盖并排／行内、首／中／尾折叠区、双向 20 行展开和末尾剩余一行，修复前可复现失败。Kit 补丁已推送并固定；实际视觉效果由用户验收，Windows／Linux 未实机验证。
 - v0.1.7 的三平台 CI 已通过 fmt、Clippy、常规串行回归、打包脚本测试及 Release 构建；macOS 128 项、Windows 126 项 Rust 测试通过，真实 SSH fixture 测试仍按配置忽略。覆盖文本比对、粘贴／文件拖入、再次编辑、刷新原子替换、标题对齐、多窗口显示偏好同步及源文件不变；Windows 子模块初始化误判修复后的 3 项集成回归均通过。此前 macOS 独立 Release 已检查浅／暗色和语言菜单；Windows／Linux 新窗口行为尚未实机验收。
 - 既有证据：子模块 118 项常规及 9 项 Docker SSH／界面测试通过，用户确认本地与 SSH 可用；暂存／撤销用真实提交树覆盖第三版本、改名、二进制、CRLF、意向添加、SHA-1／SHA-256及外部冲突。SSH 已覆盖密码／加密私钥、主机信任／变更拒绝、凭据隔离、断线重连及连接复用；用户确认 macOS → WSL、Windows SSH 可用。新功能之外未重跑这些真实远程测试。
 - [v0.1.7 正式版](https://github.com/worldtheater/patchlook/releases/tag/v0.1.7) 指向 `fcf7e4a`，中英文说明已补充默认不折行及不透明行号栏；[构建 42063924209](https://github.com/worldtheater/patchlook/actions/runs/42063924209) 三平台及 Release 上传成功，四份附件已下载校验摘要和归档。macOS ZIP 内 App 签名／公证票据／Gatekeeper 及 DMG 票据本地复核通过，版本为 0.1.7。已于 2026-11-05 16:46 UTC 发布；主页已同步 v0.1.7，Homebrew 只跟随正式发布，其 v0.1.7 同步结果未核实。Cask 使用带 App 公证票据的 ZIP，独立 tap 自动校验安装、签名、公证后更新。

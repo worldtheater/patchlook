@@ -39,7 +39,7 @@ png = "0.18"
 embed-resource = "3.0"
 
 [patch.crates-io]
-gpui-kit = { git = "https://github.com/worldtheater/gpui-kit.git", rev = "907fa984b7a1f316fc767ccf3e25c10b54932518" }
+gpui-kit = { git = "https://github.com/worldtheater/gpui-kit.git", rev = "a816d86870c469b472c2453a10945d2564d380be" }
 
 [dev-dependencies]
 gpui-kit = { version = "=0.8.0", features = ["test-support"] }

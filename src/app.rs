@@ -3,7 +3,10 @@ use crate::{
     file_icons::file_icon,
     image_diff::{ImageDiff, ImageVersions, image_format},
     strings::tr,
-    ui::{DisplaySettings, apply_appearance, apply_language, icon_button, toolbar_divider},
+    ui::{
+        DIFF_INLINE_MAX_LINE_BYTES, DisplaySettings, apply_appearance, apply_language, icon_button,
+        toolbar_divider,
+    },
 };
 use gpui_kit::assets::IconName;
 use gpui_kit::base::{SelectableText, TestSupportExt};
@@ -309,7 +312,11 @@ struct ChangeState {
 
 impl ChangeState {
     fn new(layout: Layout, cx: &mut Context<Patchlook>) -> Self {
-        let diff = cx.new(|cx| DiffState::new([], cx).with_mode(diff_mode(layout)));
+        let diff = cx.new(|cx| {
+            DiffState::new([], cx)
+                .with_mode(diff_mode(layout))
+                .with_inline_max_line_length(DIFF_INLINE_MAX_LINE_BYTES)
+        });
         let subscription = cx.observe(&diff, |_, _, cx| cx.notify());
         Self {
             loaded: false,

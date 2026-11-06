@@ -11,6 +11,9 @@ use gpui_kit::{
 use patchlook::preferences::{Appearance, Language, Preferences};
 use std::rc::Rc;
 
+/// Maximum source-line length in UTF-8 bytes for word-level diff emphasis.
+pub const DIFF_INLINE_MAX_LINE_BYTES: usize = 3_000;
+
 /// Application-wide choices shared by repository and scratch windows.
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub struct DisplaySettings {

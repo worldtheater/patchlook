@@ -2289,7 +2289,7 @@ dependencies = [
 [[package]]
 name = "gpui-base"
 version = "0.8.0"
-source = "git+https://github.com/worldtheater/gpui-kit.git?rev=907fa984b7a1f316fc767ccf3e25c10b54932518#907fa984b7a1f316fc767ccf3e25c10b54932518"
+source = "git+https://github.com/worldtheater/gpui-kit.git?rev=a816d86870c469b472c2453a10945d2564d380be#a816d86870c469b472c2453a10945d2564d380be"
 dependencies = [
  "aho-corasick",
  "anyhow",
@@ -2330,7 +2330,7 @@ dependencies = [
 [[package]]
 name = "gpui-component"
 version = "0.8.0"
-source = "git+https://github.com/worldtheater/gpui-kit.git?rev=907fa984b7a1f316fc767ccf3e25c10b54932518#907fa984b7a1f316fc767ccf3e25c10b54932518"
+source = "git+https://github.com/worldtheater/gpui-kit.git?rev=a816d86870c469b472c2453a10945d2564d380be#a816d86870c469b472c2453a10945d2564d380be"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2379,7 +2379,7 @@ dependencies = [
 [[package]]
 name = "gpui-component-macros"
 version = "0.8.0"
-source = "git+https://github.com/worldtheater/gpui-kit.git?rev=907fa984b7a1f316fc767ccf3e25c10b54932518#907fa984b7a1f316fc767ccf3e25c10b54932518"
+source = "git+https://github.com/worldtheater/gpui-kit.git?rev=a816d86870c469b472c2453a10945d2564d380be#a816d86870c469b472c2453a10945d2564d380be"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
@@ -2703,7 +2703,7 @@ dependencies = [
 [[package]]
 name = "gpui-kit"
 version = "0.8.0"
-source = "git+https://github.com/worldtheater/gpui-kit.git?rev=907fa984b7a1f316fc767ccf3e25c10b54932518#907fa984b7a1f316fc767ccf3e25c10b54932518"
+source = "git+https://github.com/worldtheater/gpui-kit.git?rev=a816d86870c469b472c2453a10945d2564d380be#a816d86870c469b472c2453a10945d2564d380be"
 dependencies = [
  "gpui-base",
  "gpui-component",
@@ -2719,7 +2719,7 @@ dependencies = [
 [[package]]
 name = "gpui-kit-assets"
 version = "0.8.0"
-source = "git+https://github.com/worldtheater/gpui-kit.git?rev=907fa984b7a1f316fc767ccf3e25c10b54932518#907fa984b7a1f316fc767ccf3e25c10b54932518"
+source = "git+https://github.com/worldtheater/gpui-kit.git?rev=a816d86870c469b472c2453a10945d2564d380be#a816d86870c469b472c2453a10945d2564d380be"
 dependencies = [
  "anyhow",
  "gpui-pre",
