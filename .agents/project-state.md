@@ -36,6 +36,7 @@
 - About、logo、许可证、中英文 README及真实浅暗截图；九语言主页提供语言菜单、直接切主题、平台下载浮层、Homebrew、单行 SHA-256 和复制，缺失／无效附件哈希阻止构建。SEO 元数据／JSON-LD／sitemap 与内容同源，Google 验证标签已部署；项目 Pages 的 sitemap 需自行提交站长工具。
 
 ### In Progress
+- [active] 发布 v0.1.8 正式版并同步主页版本／下载／SHA-256。代码已完成并验证，待三平台云端构建、macOS 签名公证及附件校验后发布，再从 main 部署 Pages；主页介绍不变。
 - [paused] 提交说明局部高亮及实时拖选：用户决定等待 Kit Base 上游；当前 SelectableText 缺局部高亮 API，拖选变化未重绘。列表高亮已完成。
 
 ### Next
