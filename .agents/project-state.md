@@ -36,25 +36,23 @@
 - About、logo、许可证、中英文 README及真实浅暗截图；九语言主页提供语言菜单、直接切主题、平台下载浮层、Homebrew、单行 SHA-256 和复制，缺失／无效附件哈希阻止构建。SEO 元数据／JSON-LD／sitemap 与内容同源，Google 验证标签已部署；项目 Pages 的 sitemap 需自行提交站长工具。
 
 ### In Progress
-- [active] 发布 v0.1.8 正式版并同步主页版本／下载／SHA-256。代码已完成并验证，待三平台云端构建、macOS 签名公证及附件校验后发布，再从 main 部署 Pages；主页介绍不变。
 - [paused] 提交说明局部高亮及实时拖选：用户决定等待 Kit Base 上游；当前 SelectableText 缺局部高亮 API，拖选变化未重绘。列表高亮已完成。
 
 ### Next
 暂无已确认的后续范围。
 
 ## Known Problems and Risks
-- P2 [confirmed]: Pages 的 release 事件构建成功，但标签不在 github-pages 环境允许范围，自动部署失败（`42067849519`）；main 手动部署可用。后续自动更新需协调发布触发方式与环境规则。
+- P2 [confirmed]: Pages 的 release 事件构建成功，但标签不在 github-pages 环境允许范围，自动部署失败（最新 `42386757610`）；main 手动部署可用。后续自动更新需协调发布触发方式与环境规则。
 - P2 [risk]: diff 布局／上下文／滚动依赖 Kit fork；升级核对上游合入，并保留消费方 `tests/diff_layout.rs`、`tests/scroll_bounce.rs` 回归。
 
 ## Open Decisions
 暂无。
 
 ## Verification
-- 行内高亮上限 3,000 字节与波浪分隔线分批展开已通过本地 fmt、Clippy（all targets，deny warnings）、9 项 diff 布局／交互回归、3 项滚动回归及 Release 构建。新增用例覆盖并排／行内、首／中／尾折叠区、双向 20 行展开和末尾剩余一行，修复前可复现失败。Kit 补丁已推送并固定；实际视觉效果由用户验收，Windows／Linux 未实机验证。
-- v0.1.7 的三平台 CI 已通过 fmt、Clippy、常规串行回归、打包脚本测试及 Release 构建；macOS 128 项、Windows 126 项 Rust 测试通过，真实 SSH fixture 测试仍按配置忽略。覆盖文本比对、粘贴／文件拖入、再次编辑、刷新原子替换、标题对齐、多窗口显示偏好同步及源文件不变；Windows 子模块初始化误判修复后的 3 项集成回归均通过。此前 macOS 独立 Release 已检查浅／暗色和语言菜单；Windows／Linux 新窗口行为尚未实机验收。
+- v0.1.8 的行内高亮上限 3,000 字节与波浪分隔线分批展开已通过本地检查及三平台 CI：macOS 129、Windows 127、Linux 128 项 Rust 测试，打包脚本 4 项；真实 SSH fixture 按配置忽略。9 项 diff 回归覆盖并排／行内、首／中／尾折叠区、双向 20 行展开和剩余一行，旧 Kit 可复现失败。四份正式附件已核对摘要／归档，macOS App／DMG 公证票据及 App 签名／Gatekeeper 通过。实际视觉效果由用户验收，Windows／Linux 未实机验证。
 - 既有证据：子模块 118 项常规及 9 项 Docker SSH／界面测试通过，用户确认本地与 SSH 可用；暂存／撤销用真实提交树覆盖第三版本、改名、二进制、CRLF、意向添加、SHA-1／SHA-256及外部冲突。SSH 已覆盖密码／加密私钥、主机信任／变更拒绝、凭据隔离、断线重连及连接复用；用户确认 macOS → WSL、Windows SSH 可用。新功能之外未重跑这些真实远程测试。
-- [v0.1.7 正式版](https://github.com/worldtheater/patchlook/releases/tag/v0.1.7) 指向 `fcf7e4a`，中英文说明已补充默认不折行及不透明行号栏；[构建 42063924209](https://github.com/worldtheater/patchlook/actions/runs/42063924209) 三平台及 Release 上传成功，四份附件已下载校验摘要和归档。macOS ZIP 内 App 签名／公证票据／Gatekeeper 及 DMG 票据本地复核通过，版本为 0.1.7。已于 2026-11-05 16:46 UTC 发布；主页已同步 v0.1.7，Homebrew 只跟随正式发布，其 v0.1.7 同步结果未核实。Cask 使用带 App 公证票据的 ZIP，独立 tap 自动校验安装、签名、公证后更新。
-- 主页既有桌面／窄屏交互、复制哈希及 Google 验证标签已验证；九项构建测试通过，从 main 手动部署 `42073367500` 成功，线上九语言版本、三平台下载链接及 SHA-256 均与 v0.1.7 Release 附件一致，介绍文案未变。Search Console 验证、sitemap 提交及实际收录／AI 引用无完成证据。
+- [v0.1.8 正式版](https://github.com/worldtheater/patchlook/releases/tag/v0.1.8) 已于 2026-11-07 15:31 UTC 发布，指向 `6b0d219`；[构建 42384035375](https://github.com/worldtheater/patchlook/actions/runs/42384035375) 三平台及上传成功，中英文说明包含长行高亮和分批展开。四份附件公共下载链接／长度及 SHA-256 与本地校验一致。Homebrew 只跟随正式发布，本次自动同步结果未核实；Cask 使用带 App 公证票据的 ZIP，独立 tap 校验安装、签名、公证后更新。
+- 主页既有桌面／窄屏交互、复制哈希及 Google 验证标签已验证；九项构建测试通过，从 main 手动部署 `42386863595` 成功，线上九语言显示版本、结构化版本、三平台下载链接及 SHA-256 均与 v0.1.8 Release 一致，介绍文案未变。Search Console 验证、sitemap 提交及实际收录／AI 引用无完成证据。
 
 ## Source Pointers
 - `src/{main,app,text_compare,text_diff,ui,preferences,strings}.rs`、`locales/`、`themes/` — 窗口、状态、文本比对、偏好和多语言。
