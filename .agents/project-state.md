@@ -14,7 +14,7 @@
 - `git/submodules.rs` 从索引 gitlink 发现直接子模块，在子模块目录内解析独立 `.git`，避免 Windows 反斜杠导致 gitfile 相对路径误判，禁止回落父仓库；进入后复用普通仓库功能，嵌套按进入逐层发现。SSH 子模块共享父认证会话，断开／重连清理共享连接。Preferences 持久化父子关系及各自浏览分支，子模块不重复列在顶层；移除父记录连同后代，不删除文件。
 - 文本 diff 解析、虚拟滚动、复制及主题来自 Kit DiffFile／DiffState；视口／行高变化在绘制后通知，不依赖移动窗口触发首次布局。`change_tree.rs` 分离已跟踪／未跟踪树，批量操作限后代；`image_diff.rs` 处理图片；`external_open.rs` 用平台 API 列出应用图标，打开工作区最新文件，删除文件打开退出时清理的旧版本副本。
 - `strings.rs` 管理九语言资源；`themes/` 统一配色，浅色沿用 Kit 语法色、正文深灰，暗色低饱和；暗色编辑器主题按当前 syntect 后端使用 `editor_*` 字段，行号栏继承不透明编辑器背景，避免横向滚动透字。Preferences 在系统配置目录原子替换 JSON。About 及 SSH Dialog 复用 Kit 弹窗／Presence，遮罩同步淡入淡出、遵循减少动态效果。Windows／Linux 窗口内菜单提供文本比对、关于、退出；macOS 系统菜单。
-- `desktop.yml` 在 main／PR 三平台检查与开发打包，匹配 Cargo 版本的 v 标签执行正式 macOS 签名／公证与三平台 Release 草稿。`scripts/package.py` 默认 ad-hoc，正式签名失败不降级。`website/` 无前端依赖，Python 生成九语言主页及最新正式 Release 的下载版本／链接／附件 SHA-256；Pages 配置为站点变更、正式发布／编辑时更新；当前环境规则仅允许 main 部署，release 标签触发会被拒绝，需手动从 main 运行。独立 Homebrew tap 每六小时检查正式版本，下载并验证后更新 Cask；使用带已附加公证票据的 macOS ZIP，不同步草稿。
+- `desktop.yml` 在 main／PR 三平台检查与开发打包，匹配 Cargo 版本的 v 标签执行正式 macOS 签名／公证与三平台 Release 草稿。`scripts/package.py` 默认 ad-hoc，正式签名失败不降级。`website/` 无前端依赖，Python 生成九语言主页及最新正式 Release 的下载版本／链接／附件 SHA-256；`release-sync.yml` 在最新正式 Release 发布／编辑后分开调度默认分支的 Pages 与独立 tap `update.yml`，跳过草稿／预发行及旧版本编辑；Pages 保留 main 环境限制。跨仓库调度使用仅有 tap Actions 写入权限的 `HOMEBREW_TAP_TOKEN`；tap 自身令牌负责校验后提交，六小时定时检查保留。两端从最新正式 Release 读取下载 URL／SHA-256，Homebrew 使用带公证票据的 macOS ZIP。
 
 ## Project Conventions
 - GPUI 统一从 `gpui_kit` 导入，复用主题／控件；界面文案在九份 `locales/*.json`，键及占位符一致。Kit 0.8.0 固定 fork revision `a816d86870c469b472c2453a10945d2564d380be`（已推送），维护 Cargo.lock，不提交本机 path override；升级及补丁归属见 `docs/development.md`。
@@ -36,13 +36,13 @@
 - About、logo、许可证、中英文 README及真实浅暗截图；九语言主页提供语言菜单、直接切主题、平台下载浮层、Homebrew、单行 SHA-256 和复制，缺失／无效附件哈希阻止构建。SEO 元数据／JSON-LD／sitemap 与内容同源，Google 验证标签已部署；项目 Pages 的 sitemap 需自行提交站长工具。
 
 ### In Progress
+- [active] 接通正式发布后的主页与 Homebrew 自动同步：调度流程及一次性配置说明已实现，actionlint、主页 9 项和 tap 6 项测试通过。待在 Patchlook 配置 `HOMEBREW_TAP_TOKEN` 后运行 Sync published release，验证两个下游工作流及线上版本／hash；当前仍未端到端验证。
 - [paused] 提交说明局部高亮及实时拖选：用户决定等待 Kit Base 上游；当前 SelectableText 缺局部高亮 API，拖选变化未重绘。列表高亮已完成。
 
 ### Next
 暂无已确认的后续范围。
 
 ## Known Problems and Risks
-- P2 [confirmed]: Pages 的 release 事件构建成功，但标签不在 github-pages 环境允许范围，自动部署失败（最新 `42386757610`）；main 手动部署可用。后续自动更新需协调发布触发方式与环境规则。
 - P2 [risk]: diff 布局／上下文／滚动依赖 Kit fork；升级核对上游合入，并保留消费方 `tests/diff_layout.rs`、`tests/scroll_bounce.rs` 回归。
 
 ## Open Decisions

@@ -1,0 +1,78 @@
+name: Sync published release
+
+on:
+  release:
+    types: [published, edited]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync-published-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.event_name == 'workflow_dispatch' || (!github.event.release.draft && !github.event.release.prerelease)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      sync: ${{ steps.latest.outputs.sync }}
+    steps:
+      - name: Check latest published stable release
+        id: latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ github.event.release.id }}
+        run: |
+          latest_id="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq '.id')"
+          if [[ "$GITHUB_EVENT_NAME" == release && "$RELEASE_ID" != "$latest_id" ]]; then
+            echo 'Skipping a release that is not the latest stable release.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo 'sync=true' >> "$GITHUB_OUTPUT"
+
+  homepage:
+    needs: release
+    if: needs.release.outputs.sync == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - name: Deploy homepage from the default branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          # A release runs on its tag; Pages only permits deployments from main.
+          gh api --method POST \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/$GITHUB_REPOSITORY/actions/workflows/pages.yml/dispatches" \
+            -f ref="$DEFAULT_BRANCH" \
+            --jq '"[Homepage deployment](\(.html_url))"' >> "$GITHUB_STEP_SUMMARY"
+
+  homebrew:
+    needs: release
+    if: needs.release.outputs.sync == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      HOMEBREW_TAP_REPOSITORY: ${{ vars.HOMEBREW_TAP_REPOSITORY || format('{0}/homebrew-tap', github.repository_owner) }}
+    steps:
+      - name: Update and validate the Homebrew cask
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [[ -z "$GH_TOKEN" ]]; then
+            echo '::error::Set HOMEBREW_TAP_TOKEN to a fine-grained token with Actions write permission on the tap repository.'
+            exit 1
+          fi
+          default_branch="$(gh api "repos/$HOMEBREW_TAP_REPOSITORY" --jq '.default_branch')"
+          gh api --method POST \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/$HOMEBREW_TAP_REPOSITORY/actions/workflows/update.yml/dispatches" \
+            -f ref="$default_branch" \
+            --jq '"[Homebrew update](\(.html_url))"' >> "$GITHUB_STEP_SUMMARY"

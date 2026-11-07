@@ -24,8 +24,10 @@ Open `http://127.0.0.1:4173/` (English); use the language menu for the other eig
 `website/site.json` owns the repository and canonical site URLs, language routes, and Homebrew tap details. Language names come from the app's locale resources; homepage copy lives in `website/locales/`. Build checks require complete matching translation keys and working links for every language.
 
 For the first deployment, set **Settings → Pages → Source → GitHub Actions**.
-`.github/workflows/pages.yml` builds and deploys homepage changes on `main`, manual
-runs, and published/edited releases; pull requests only build and validate.
+`.github/workflows/pages.yml` builds and deploys homepage changes on `main` and
+manual runs; pull requests only build and validate. The release synchronization
+workflow dispatches it on the default branch after publication, keeping the
+`github-pages` environment restricted to `main`.
 It reads the latest published stable release at build time, so new releases update
 the version and platform links without editing page copy. Drafts are never used.
 
@@ -190,6 +192,9 @@ To prepare a release:
 2. Commit and push the changes.
 3. Push a matching version tag, such as `v0.1.0`.
 4. Review the generated Release draft and its packages before publishing it.
+5. Publishing a stable release starts **Sync published release**, which dispatches
+   the homepage deployment and the Homebrew tap update. Their run links appear in
+   the synchronization job summaries; check those runs for the final results.
 
 For version tags, the macOS job imports the signing certificate into a temporary keychain, signs with Hardened Runtime and a secure timestamp, submits the DMG to Apple, staples and validates notarization tickets, and checks Gatekeeper acceptance. The ZIP contains the stapled app. A Release draft is created or updated only after all platforms pass; published release assets are not replaced.
 
@@ -205,6 +210,44 @@ Configure these repository secrets under **Settings → Secrets and variables �
 | `APPLE_APP_SPECIFIC_PASSWORD` | App-specific password for notarization |
 
 Keep certificates, private keys, and passwords out of the repository. Missing credentials or a failed signing, notarization, or ticket check stops the release job.
+
+### Automatic homepage and Homebrew updates
+
+The [release synchronization workflow](../.github/workflows/release-sync.yml)
+reacts to published/edited releases. Drafts, prereleases, and edits to older
+releases are ignored. It dispatches both consumers on their default branches;
+each reads the latest published stable Release and uses its actual asset URLs and
+SHA-256 digests. The homepage uses the DMG, Windows ZIP, and Linux archive; Homebrew
+uses the macOS ZIP. No version or checksum is copied by hand.
+
+The homepage uses the repository's built-in `GITHUB_TOKEN`. To trigger the separate
+tap repository, configure one additional secret in **Patchlook → Settings → Secrets
+and variables → Actions**:
+
+| Secret | Value |
+| --- | --- |
+| `HOMEBREW_TAP_TOKEN` | Fine-grained personal access token restricted to `worldtheater/homebrew-tap`, with **Actions: Read and write** (Metadata read is automatic) |
+
+The token only dispatches the tap's existing `update.yml`; that workflow uses its
+own `GITHUB_TOKEN` to commit the cask after download hash, installation, audit,
+signature, and notarization checks pass. Token creation is under **GitHub Settings
+→ Developer settings → Personal access tokens → Fine-grained tokens**. Choose an
+expiry and renew the repository secret before it expires. Do not put the token in
+source files or release notes.
+
+The tap defaults to `<repository owner>/homebrew-tap`; set the repository variable
+`HOMEBREW_TAP_REPOSITORY` if a fork uses another tap. Homepage and tap dispatches
+are independent, so a missing or expired tap token does not stop the homepage.
+The tap's six-hour scheduled check remains available to catch missed updates.
+
+To retry or verify the connection without releasing another version, run **Actions
+→ Sync published release → Run workflow** on `main`. Both consumers are safe to
+rerun for the same release. If publication is later automated using `GITHUB_TOKEN`,
+explicitly dispatch `release-sync.yml` after publishing: GitHub does not emit another
+workflow run for that token's `release` event, but does allow `workflow_dispatch`.
+
+References: [GitHub token event behavior](https://docs.github.com/en/actions/concepts/security/github_token)
+and [workflow dispatch permissions](https://docs.github.com/en/rest/actions/workflows#create-a-workflow-dispatch-event).
 
 ### Check a notarization timeout
 

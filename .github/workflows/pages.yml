@@ -16,8 +16,6 @@ on:
       - 'docs/images/patchlook-light-dark.webp'
       - 'assets/app-icon/patchlook-v2.png'
       - '.github/workflows/pages.yml'
-  release:
-    types: [published, edited]
   workflow_dispatch:
 
 permissions:
@@ -32,9 +30,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          # Release events otherwise check out their tag, which can predate the site.
-          ref: ${{ github.event_name == 'release' && github.event.repository.default_branch || github.ref }}
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
