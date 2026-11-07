@@ -51,7 +51,7 @@
 ## Verification
 - v0.1.8 的行内高亮上限 3,000 字节与波浪分隔线分批展开已通过本地检查及三平台 CI：macOS 129、Windows 127、Linux 128 项 Rust 测试，打包脚本 4 项；真实 SSH fixture 按配置忽略。9 项 diff 回归覆盖并排／行内、首／中／尾折叠区、双向 20 行展开和剩余一行，旧 Kit 可复现失败。四份正式附件已核对摘要／归档，macOS App／DMG 公证票据及 App 签名／Gatekeeper 通过。实际视觉效果由用户验收，Windows／Linux 未实机验证。
 - 既有证据：子模块 118 项常规及 9 项 Docker SSH／界面测试通过，用户确认本地与 SSH 可用；暂存／撤销用真实提交树覆盖第三版本、改名、二进制、CRLF、意向添加、SHA-1／SHA-256及外部冲突。SSH 已覆盖密码／加密私钥、主机信任／变更拒绝、凭据隔离、断线重连及连接复用；用户确认 macOS → WSL、Windows SSH 可用。新功能之外未重跑这些真实远程测试。
-- [v0.1.8 正式版](https://github.com/worldtheater/patchlook/releases/tag/v0.1.8) 已于 2026-11-07 15:31 UTC 发布，指向 `6b0d219`；[构建 42384035375](https://github.com/worldtheater/patchlook/actions/runs/42384035375) 三平台及上传成功，中英文说明包含长行高亮和分批展开。四份附件公共下载链接／长度及 SHA-256 与本地校验一致。Homebrew 只跟随正式发布，本次自动同步结果未核实；Cask 使用带 App 公证票据的 ZIP，独立 tap 校验安装、签名、公证后更新。
+- [v0.1.8 正式版](https://github.com/worldtheater/patchlook/releases/tag/v0.1.8) 已于 2026-11-07 15:31 UTC 发布，指向 `6b0d219`；[构建 42384035375](https://github.com/worldtheater/patchlook/actions/runs/42384035375) 三平台及上传成功，中英文说明包含长行高亮和分批展开。四份附件公共下载链接／长度及 SHA-256 与本地校验一致。Homebrew tap 已同步 0.1.8（`23c4dee`），云端检查 `42388644762` 的安装／审计／签名／公证全部通过；本机 Homebrew 升级后版本及 Gatekeeper 也已复核。Cask 使用带 App 公证票据的 ZIP，只跟随正式发布。
 - 主页既有桌面／窄屏交互、复制哈希及 Google 验证标签已验证；九项构建测试通过，从 main 手动部署 `42386863595` 成功，线上九语言显示版本、结构化版本、三平台下载链接及 SHA-256 均与 v0.1.8 Release 一致，介绍文案未变。Search Console 验证、sitemap 提交及实际收录／AI 引用无完成证据。
 
 ## Source Pointers
